@@ -242,8 +242,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 setupMediaMonitoring();
 
 // Notify background/UI that content script is ready
-chrome.runtime.sendMessage({
-  action: 'content_script_ready',
-  url: window.location.href,
-  title: document.title,
-});
+try {
+  chrome.runtime.sendMessage({
+    action: 'content_script_ready',
+    url: window.location.href,
+    title: document.title,
+  });
+} catch (e) {
+  // Ignore invalidation errors on init
+}

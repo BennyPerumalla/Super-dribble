@@ -19,13 +19,21 @@ async function setupOffscreenDocument(path) {
   if (offscreenCreating) {
     await offscreenCreating;
   } else {
-    offscreenCreating = chrome.offscreen.createDocument({
-      url: path,
-      reasons: ['AUDIO_PLAYBACK'],
-      justification: 'Processing audio for equalization and effects',
-    });
-    await offscreenCreating;
-    offscreenCreating = null;
+    try {
+      offscreenCreating = chrome.offscreen.createDocument({
+        url: path,
+        reasons: ['AUDIO_PLAYBACK'],
+        justification: 'Processing audio for equalization and effects',
+      });
+      await offscreenCreating;
+    } catch (e) {
+      if (!e.message.startsWith('Only a single offscreen')) {
+         throw e;
+      }
+      console.log('Offscreen document already exists (race condition handled).');
+    } finally {
+      offscreenCreating = null;
+    }
   }
 }
 
@@ -133,6 +141,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               eqValues: currentEqValues,
               preset: currentPreset
           }); 
+      }
+      else {
+          sendResponse({ success: false, error: 'Unknown action or unhandled' });
       }
     } catch (error) {
       console.error('Background error:', error);

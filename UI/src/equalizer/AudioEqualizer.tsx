@@ -2,12 +2,11 @@ import React, { useState, useCallback, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { EqualizerBand } from "./EqualizerBand";
 import { VolumeControl } from "./VolumeControl";
-import { EQPreset } from "@/constants/eq_presets";
 import { LuaPresetManager } from "@/equalizer/LuaPresetManager";
 import { Settings, Play, Pause, ChevronDown, Wifi, WifiOff, PanelTopClose } from "lucide-react";
 import { audioService } from "@/lib/audioService";
 import FREQUENCY_BANDS from "@/constants/frequencyBands";
-import EQ_PRESETS from "@/constants/eq_presets";
+import EQ_PRESETS, { EQPreset } from "@/constants/eq_presets";
 
 
 interface AudioEqualizerProps {

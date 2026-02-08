@@ -62,11 +62,11 @@ chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
   }
 });
 
+let activeStream = null;
+
 async function handleStartCapture(streamId, sendResponse) {
     try {
         if (isProcessing) {
-            // If already processing, we arguably should stop and restart if the streamId is different,
-            // or just ignore. For now, let's stop and restart to be safe.
             stopProcessing();
         }
 
@@ -79,6 +79,8 @@ async function handleStartCapture(streamId, sendResponse) {
             },
             video: false
         });
+        
+        activeStream = stream;
 
         // Initialize Audio Context
         audioContext = new AudioContext();
@@ -149,5 +151,12 @@ function stopProcessing() {
         audioContext.close();
         audioContext = null;
     }
+    
+    // Stop all media tracks to release the capture
+    if (activeStream) {
+        activeStream.getTracks().forEach(track => track.stop());
+        activeStream = null;
+    }
+
     isProcessing = false;
 }

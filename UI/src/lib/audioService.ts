@@ -66,6 +66,14 @@ class AudioService {
       const tab = tabs[0];
       this.capturedTabId = tab.id ?? null;
 
+      // Check if we are already connected to this tab
+      const existingStatus = await this.checkConnection();
+      if (existingStatus && existingStatus.isInitialized && existingStatus.activeTabId === this.capturedTabId) {
+          console.log('Audio capture already active for this tab.');
+          this.isInitialized = true;
+          return true;
+      }
+      
        // Check validity
       if (tab.url?.startsWith('chrome://') || tab.url?.startsWith('edge://')) {
         throw new Error('Cannot capture audio from browser internal pages');
@@ -261,7 +269,24 @@ class AudioService {
   }
 
   async applyLuaPreset(presetType: 'equalizer' | 'spatializer', preset: any): Promise<boolean> {
-      return true; 
+      if (!this.isInitialized) await this.checkConnection();
+      
+      if (presetType === 'equalizer' && preset.bands && Array.isArray(preset.bands)) {
+          // Map Lua bands to the fixed 10 bands required by the engine
+          // The Lua presets have 16 bands, indices 0-9 correspond to the 10 UI sliders/engine bands.
+          const values = preset.bands.slice(0, 10).map((b: any) => b.gain || 0);
+          
+          return this.updateEQPreset({
+              name: preset.name,
+              values: values
+          });
+      } else if (presetType === 'spatializer') {
+          // Send spatializer params if supported (currently only EQ is fully impemented in offscreen.js)
+          // We can add spatializer support later, but for now just acknowledge.
+          console.log('Applying spatializer preset:', preset);
+          return true; 
+      }
+      return false;
   }
 
   // Check if the service is available (Chrome extension context)
