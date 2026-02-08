@@ -4,7 +4,10 @@
 export interface AudioStatus {
   isProcessing: boolean;
   isInitialized: boolean;
-  bandsCount: number;
+  activeTabId?: number;
+  volume?: number;
+  eqValues?: number[];
+  preset?: string;
 }
 
 export interface EQPreset {
@@ -86,7 +89,8 @@ class AudioService {
       // Send to background to start offscreen processing
       const response = await chrome.runtime.sendMessage({
           action: 'start_capture',
-          streamId: streamId
+          streamId: streamId,
+          tabId: this.capturedTabId // Send tabId for state tracking
       });
 
       if (response && response.success) {
@@ -102,6 +106,27 @@ class AudioService {
       this.isInitialized = false;
       return false;
     }
+  }
+
+  // Check if there is an active connection for the current tab
+  async checkConnection(): Promise<AudioStatus | null> {
+      if (!this.isAvailable()) return null;
+      try {
+          const status = await this.getStatus();
+          const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+          const currentTabId = tabs[0]?.id;
+
+          if (status && status.isInitialized && status.activeTabId === currentTabId) {
+              this.isInitialized = true;
+              this.capturedTabId = currentTabId ?? null;
+              console.log('Restored connection to active audio session');
+              return status;
+          }
+          return null;
+      } catch (e) {
+          console.error('Failed to check connection:', e);
+          return null;
+      }
   }
 
   // Stop audio capture
@@ -121,25 +146,27 @@ class AudioService {
 
   // Update volume
   async updateVolume(volume: number): Promise<boolean> {
+    // If we haven't initialized locally, check if we can restore connection first
+    if (!this.isInitialized) await this.checkConnection();
     return this.sendControlMessage('set_volume', { value: volume });
   }
 
   // Update mute state
   async updateMute(isMuted: boolean, previousVolume: number): Promise<boolean> {
-      // Logic for mute can be handled here or in offscreen.
-      // Easiest is to just send set_volume(0) or set_volume(prev)
+      if (!this.isInitialized) await this.checkConnection();
       const targetVolume = isMuted ? 0 : previousVolume;
       return this.sendControlMessage('set_volume', { value: targetVolume });
   }
 
   // Update individual EQ band
   async updateEQBand(bandIndex: number, gainDb: number): Promise<boolean> {
-     // TODO: Implement EQ message in offscreen first
+     if (!this.isInitialized) await this.checkConnection();
      return this.sendControlMessage('update_eq', { bandIndex, gainDb });
   }
 
   // Update EQ preset
   async updateEQPreset(preset: EQPreset): Promise<boolean> {
+     if (!this.isInitialized) await this.checkConnection();
      return this.sendControlMessage('update_eq_preset', { preset });
   }
 
@@ -160,6 +187,12 @@ class AudioService {
   // Send playback control command to the captured tab
   async controlPlayback(command: 'toggle' | 'play' | 'pause' | 'next' | 'previous'): Promise<boolean> {
     try {
+      if (!this.capturedTabId) {
+          // If we don't have a captured ID, maybe we can just target the active tab
+           const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+           if (tabs[0]?.id) this.capturedTabId = tabs[0].id;
+      }
+      
       if (!this.capturedTabId) return false;
       const response = await this.sendMessageToTab({
         action: 'media_control',
@@ -204,14 +237,14 @@ class AudioService {
   }
 
   // Get audio processing status
-  async getStatus(): Promise<AudioStatus | null> {
+  async getStatus(): Promise<(AudioStatus & { activeTabId?: number }) | null> {
     if (!this.isAvailable()) return null;
 
     try {
       const response = await chrome.runtime.sendMessage({
         action: 'get_status'
       });
-      return response as AudioStatus;
+      return response;
     } catch (error) {
       return null;
     }

@@ -152,6 +152,27 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
     };
   }, []);
 
+  // Check initial connection status on mount
+  useEffect(() => {
+      const checkStatus = async () => {
+          if (audioService.isAvailable()) {
+              const status = await audioService.checkConnection();
+              if (status && status.isInitialized) {
+                  setIsAudioInitialized(true);
+                  
+                  // Restore State
+                  if (typeof status.volume === 'number') setVolume(status.volume);
+                  if (status.eqValues && Array.isArray(status.eqValues)) setEqValues(status.eqValues);
+                  if (status.preset) setActivePreset(status.preset);
+
+                  const info = await audioService.getMediaInfo();
+                  if (info) setIsPlaying(!!info.isPlaying);
+              }
+          }
+      };
+      checkStatus();
+  }, []);
+
   // Periodic polling fallback in case events are missed
   useEffect(() => {
     if (!audioService.isAvailable()) return;

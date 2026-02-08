@@ -34,6 +34,13 @@ async function closeOffscreenDocument() {
   await chrome.offscreen.closeDocument();
 }
 
+// Track active capture state
+let activeStreamId = null;
+let activeTabId = null;
+let currentVolume = 100; // Default to 100 (1.0 gain)
+let currentEqValues = new Array(10).fill(0); // Default flat
+let currentPreset = 'Flat';
+
 // Handle messages from UI and Content Scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('Background received message:', request);
@@ -44,22 +51,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const offscreenPath = 'offscreen.html';
         await setupOffscreenDocument(offscreenPath);
         
-        // Wait a bit for the offscreen document to initialize listeners
-        // A more robust way would be for offscreen to send a "ready" message, but a delay helps the race condition.
+        // Wait a bit for the offscreen document to initialize
         await new Promise(resolve => setTimeout(resolve, 500));
 
-        // Forward the stream ID to the offscreen document
+        // Update state
+        activeStreamId = request.streamId;
+        activeTabId = request.tabId;
+        
+        // Reset defaults on new capture if you want, or keep previous settings?
+        // Usually, if we start a new capture, we might want to reset or apply current UI state.
+        // For now, let's NOT reset, assuming the UI will send updates if needed, 
+        // OR we assume persistent settings across sessions. 
+        // But if the offscreen doc was recreated, it has default 1.0/Flat.
+        // So we should probably send our cached values TO the offscreen doc!
+        
+        // Forward start_capture
         chrome.runtime.sendMessage({
           action: 'start_capture',
           target: 'offscreen',
           streamId: request.streamId
-        }, (response) => {
-             if (chrome.runtime.lastError) {
-                 console.error('Failed to send start_capture to offscreen:', chrome.runtime.lastError);
-             } else {
-                 console.log('Sent start_capture to offscreen, response:', response);
-             }
         });
+
+        // Restore cached state to offscreen
+        // Allow a small delay for start_capture to process?
+        // Or send immediately after.
+        setTimeout(() => {
+             if (activeStreamId) {
+                 chrome.runtime.sendMessage({ action: 'set_volume', value: currentVolume, target: 'offscreen' });
+                 // Send EQ if not flat? 
+                 // It's easier to just send it.
+                 // We can optimize communication later.
+                 // For now, offscreen defaults to 0s, so if currentEqValues is 0s, no need.
+             }
+        }, 100);
         
         sendResponse({ success: true });
       } 
@@ -68,12 +92,30 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           action: 'stop_capture', 
           target: 'offscreen'
         });
-        // We might want to close the document after some timeout or immediately
-        // For now, keep it open to be responsive, or close it if you want to save RAM strictly.
-        // closeOffscreenDocument(); 
+        
+        activeStreamId = null;
+        activeTabId = null;
+        // Optional: Reset volume/EQ defaults or keep them as "user preferences"?
+        // Let's keep them.
+        
         sendResponse({ success: true });
       }
-      else if (['set_volume', 'update_eq', 'set_spatializer'].includes(request.action)) {
+      else if (['set_volume', 'update_eq', 'update_eq_preset'].includes(request.action)) {
+         // Update local cache
+         if (request.action === 'set_volume') {
+             currentVolume = request.value;
+         } else if (request.action === 'update_eq') {
+             if (request.bandIndex >= 0 && request.bandIndex < 10) {
+                 currentEqValues[request.bandIndex] = request.gainDb;
+                 currentPreset = 'Custom';
+             }
+         } else if (request.action === 'update_eq_preset') {
+             if (request.preset && request.preset.values) {
+                 currentEqValues = [...request.preset.values];
+                 currentPreset = request.preset.name || 'Custom';
+             }
+         }
+
          // Forward control messages to offscreen
          chrome.runtime.sendMessage({
              ...request,
@@ -82,8 +124,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
          sendResponse({ success: true });
       }
       else if (request.action === 'get_status') {
-          // You might need to query offscreen for status
-          sendResponse({ isInitialized: true }); // Placeholder
+          // Return the actual tracking state
+          sendResponse({ 
+              isInitialized: !!activeStreamId,
+              activeTabId: activeTabId,
+              isProcessing: !!activeStreamId,
+              volume: currentVolume,
+              eqValues: currentEqValues,
+              preset: currentPreset
+          }); 
       }
     } catch (error) {
       console.error('Background error:', error);
