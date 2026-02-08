@@ -1,61 +1,58 @@
-## Node
+# Node package managers
 node_modules/
+
+# npm
+package-lock.json
 npm-debug.log*
+npm-debug.log.*
+
+# pnpm
+pnpm-lock.yaml
+pnpm-workspace.yaml
+.pnpm-store/
+
+# yarn (optional but safe)
+yarn.lock
 yarn-debug.log*
 yarn-error.log*
 
-## Build output
-/build/
-/dist/
-/out/
+# Build outputs
+dist/
+build/
+out/
+UI/build/
 
-## Vite / cache
+# Framework & tooling caches
 .vite/
 .cache/
-
-## TypeScript
-*.tsbuildinfo
-
-## Env
-.env
-.env.*.local
-
-## Editor
-.DS_Store
-.idea/
-.vscode/
-
-## OS
-Thumbs.db
-ehthumbs.db
-
-## Misc
 .parcel-cache/
 .next/
 .storybook-static/
-# VS Code settings
-.vscode/
-*.code-workspace
 
-# OS and temp files
-.DS_Store
-Thumbs.db
+# TypeScript
+*.tsbuildinfo
+
+# Environment variables
+.env
+.env.*
+.env.*.local
 
 # Logs
 *.log
 
-# Web build artifacts
-dist/
-build/
-UI/build/
+# Editor / IDE
+.vscode/
+.idea/
+*.code-workspace
+# OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
 
-# Node / Web
-node_modules/
-
-# Compiled WASM output
+# WebAssembly & temp
 *.wasm
 *.js.mem
 *.tmp
 
-# Lua backups
+# Misc backups
 *.bak
