@@ -106,7 +106,20 @@ function sendMediaUpdate(force = false) {
   if (force || key !== JSON.stringify(lastSent) || throttleOk) {
     lastSent = JSON.parse(key);
     if (isTimeUpdate) lastTimeUpdateSentAt = now;
-    chrome.runtime.sendMessage({ action: 'media_state_update', ...info });
+    try {
+      chrome.runtime.sendMessage({ action: 'media_state_update', ...info });
+    } catch (e) {
+      // Extension context invalidated (e.g. extension reloaded/updated)
+      if (e.message.includes('Extension context invalidated')) {
+        console.log('Extension context invalidated. Stopping content script activity.');
+        // Clean up listeners if possible, or just ignore.
+        if (mediaObserver) mediaObserver.disconnect();
+        // Remove event listeners logic would be here if we tracked them better, 
+        // but just stopping outgoing messages is usually enough.
+      } else {
+        console.error('Failed to send media update:', e);
+      }
+    }
   }
 }
 
@@ -229,8 +242,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 setupMediaMonitoring();
 
 // Notify background/UI that content script is ready
-chrome.runtime.sendMessage({
-  action: 'content_script_ready',
-  url: window.location.href,
-  title: document.title,
-});
+try {
+  chrome.runtime.sendMessage({
+    action: 'content_script_ready',
+    url: window.location.href,
+    title: document.title,
+  });
+} catch (e) {
+  // Ignore invalidation errors on init
+}
