@@ -26,6 +26,18 @@ const double PI = 3.14159265358979323846;
 const int MAX_BANDS = 16;
 
 /**
+ * @enum FilterType
+ * @brief Defines the available filter types for each EQ band.
+ */
+enum FilterType {
+    PEAKING = 0,
+    LOW_PASS = 1,
+    HIGH_PASS = 2,
+    LOW_SHELF = 3,
+    HIGH_SHELF = 4
+};
+
+/**
  * @class BiquadFilter
  * @brief Implements a single second-order IIR filter (biquad).
  *
@@ -73,13 +85,20 @@ public:
     /**
      * Sets the parameters for a specific EQ band.
      * This function recalculates the biquad coefficients based on the provided
-     * frequency, gain (in dB), and Q factor.
+     * frequency, gain (in dB), Q factor, and filter type.
      *
      * @param bandIndex The index of the band to modify (0-15).
-     * @param frequency The center frequency of the band in Hz.
+     * @param frequency The center/cutoff frequency of the band in Hz.
      * @param gainDb The gain in decibels (dB).
-     * @param q The Q factor (bandwidth).
+     * @param q The Q factor (bandwidth/slope).
+     * @param filterType The type of filter (PEAKING, LOW_PASS, HIGH_PASS, LOW_SHELF, HIGH_SHELF).
      */
+    void setBand(int bandIndex, double frequency, double gainDb, double q, FilterType filterType = PEAKING) {
+        if (bandIndex < 0 || bandIndex >= MAX_BANDS) {
+            return;
+        }
+
+        // All formulas derived from the Audio EQ Cookbook by Robert Bristow-Johnson.
     
     void setBand(int bandIndex, double frequency, double gainDb, double q) {
         if (bandIndex < 0 || bandIndex >= MAX_BANDS) {
@@ -97,12 +116,71 @@ public:
         double sin_w0 = sin(w0);
         double alpha = sin_w0 / (2.0 * q);
 
-        double b0_coeff = 1.0 + alpha * A;
-        double b1_coeff = -2.0 * cos_w0;
-        double b2_coeff = 1.0 - alpha * A;
-        double a0_coeff = 1.0 + alpha / A;
-        double a1_coeff = -2.0 * cos_w0;
-        double a2_coeff = 1.0 - alpha / A;
+        double b0_coeff, b1_coeff, b2_coeff;
+        double a0_coeff, a1_coeff, a2_coeff;
+
+        switch (filterType) {
+            case PEAKING:
+                b0_coeff = 1.0 + alpha * A;
+                b1_coeff = -2.0 * cos_w0;
+                b2_coeff = 1.0 - alpha * A;
+                a0_coeff = 1.0 + alpha / A;
+                a1_coeff = -2.0 * cos_w0;
+                a2_coeff = 1.0 - alpha / A;
+                break;
+
+            case LOW_PASS:
+                b0_coeff = (1.0 - cos_w0) / 2.0;
+                b1_coeff = 1.0 - cos_w0;
+                b2_coeff = (1.0 - cos_w0) / 2.0;
+                a0_coeff = 1.0 + alpha;
+                a1_coeff = -2.0 * cos_w0;
+                a2_coeff = 1.0 - alpha;
+                break;
+
+            case HIGH_PASS:
+                b0_coeff = (1.0 + cos_w0) / 2.0;
+                b1_coeff = -(1.0 + cos_w0);
+                b2_coeff = (1.0 + cos_w0) / 2.0;
+                a0_coeff = 1.0 + alpha;
+                a1_coeff = -2.0 * cos_w0;
+                a2_coeff = 1.0 - alpha;
+                break;
+
+            case LOW_SHELF:
+                {
+                    double sqrt_A = sqrt(A);
+                    b0_coeff = A * ((A + 1) - (A - 1) * cos_w0 + 2.0 * sqrt_A * alpha);
+                    b1_coeff = 2.0 * A * ((A - 1) - (A + 1) * cos_w0);
+                    b2_coeff = A * ((A + 1) - (A - 1) * cos_w0 - 2.0 * sqrt_A * alpha);
+                    a0_coeff = (A + 1) + (A - 1) * cos_w0 + 2.0 * sqrt_A * alpha;
+                    a1_coeff = -2.0 * ((A - 1) + (A + 1) * cos_w0);
+                    a2_coeff = (A + 1) + (A - 1) * cos_w0 - 2.0 * sqrt_A * alpha;
+                }
+                break;
+
+            case HIGH_SHELF:
+                {
+                    double sqrt_A = sqrt(A);
+                    b0_coeff = A * ((A + 1) + (A - 1) * cos_w0 + 2.0 * sqrt_A * alpha);
+                    b1_coeff = -2.0 * A * ((A - 1) + (A + 1) * cos_w0);
+                    b2_coeff = A * ((A + 1) + (A - 1) * cos_w0 - 2.0 * sqrt_A * alpha);
+                    a0_coeff = (A + 1) - (A - 1) * cos_w0 + 2.0 * sqrt_A * alpha;
+                    a1_coeff = 2.0 * ((A - 1) - (A + 1) * cos_w0);
+                    a2_coeff = (A + 1) - (A - 1) * cos_w0 - 2.0 * sqrt_A * alpha;
+                }
+                break;
+
+            default:
+                // Fallback to peaking
+                b0_coeff = 1.0 + alpha * A;
+                b1_coeff = -2.0 * cos_w0;
+                b2_coeff = 1.0 - alpha * A;
+                a0_coeff = 1.0 + alpha / A;
+                a1_coeff = -2.0 * cos_w0;
+                a2_coeff = 1.0 - alpha / A;
+                break;
+        }
 
         for(int ch = 0; ch < 2; ch++) {
             BiquadFilter& band = ch == 0 ? bandsLeft[bandIndex] : bandsRight[bandIndex];
@@ -156,8 +234,8 @@ extern "C" {
         delete eq;
     }
 
-    void set_band(Equalizer* eq, int bandIndex, double frequency, double gainDb, double q) {
-        eq->setBand(bandIndex, frequency, gainDb, q);
+    void set_band(Equalizer* eq, int bandIndex, double frequency, double gainDb, double q, int filterType) {
+        eq->setBand(bandIndex, frequency, gainDb, q, static_cast<FilterType>(filterType));
     }
 
     void process_buffer(Equalizer* eq, float* buffer, int numSamples) {
