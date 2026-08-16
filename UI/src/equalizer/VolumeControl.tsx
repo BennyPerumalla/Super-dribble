@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { Volume1, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { VolumeX, Volume1, Volume2 } from "lucide-react";
 
 interface VolumeControlProps {
   volume: number;
@@ -17,109 +17,78 @@ export const VolumeControl: React.FC<VolumeControlProps> = ({
   onToggleMute,
   className,
 }) => {
-  const [isDragging, setIsDragging] = useState(false);
-  const [tempVolume, setTempVolume] = useState(volume);
+  const [temporaryVolume, setTemporaryVolume] = useState(volume);
+  const isDragging = useRef(false);
+  const displayedVolume = isMuted ? 0 : temporaryVolume;
+  const VolumeIcon =
+    isMuted || volume === 0 ? VolumeX : volume < 50 ? Volume1 : Volume2;
 
-  const getVolumeIcon = () => {
-    if (isMuted || volume === 0) return VolumeX;
-    if (volume < 50) return Volume1;
-    return Volume2;
+  useEffect(() => {
+    if (!isDragging.current) setTemporaryVolume(volume);
+  }, [volume]);
+
+  const commitPointerValue = (event: React.PointerEvent<HTMLInputElement>) => {
+    isDragging.current = false;
+    const nextVolume = Number(event.currentTarget.value);
+    setTemporaryVolume(nextVolume);
+    onVolumeChange(nextVolume);
   };
-  const VolumeIcon = getVolumeIcon();
 
   return (
-    <div
+    <section
       className={cn(
-        "flex items-center gap-4 p-4 rounded-xl",
-        "border border-eq-border",
+        "surface-panel flex min-h-[88px] items-center gap-4 px-5 py-4 sm:gap-5 sm:px-6",
         className,
       )}
+      aria-label="Output volume"
     >
-      {/* Mute Button */}
       <button
+        type="button"
         onClick={onToggleMute}
         aria-label={isMuted ? "Unmute audio" : "Mute audio"}
+        aria-pressed={isMuted}
         className={cn(
-          "p-2 rounded-lg transition-all duration-150 ease-out",
-          "hover:bg-eq-surface-light hover:scale-105",
-          {
-            "text-eq-danger": isMuted,
-            "text-eq-text hover:text-eq-accent": !isMuted,
-          },
+          "soft-control flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-[14px]",
+          isMuted ? "text-[#d84f65]" : "text-[#687084] hover:text-[#3f7df4]",
         )}
       >
-        <VolumeIcon size={20} />
+        <VolumeIcon size={22} strokeWidth={1.8} />
       </button>
 
-      {/* Volume Slider Container */}
-      <div className="relative flex-1 h-6 flex items-center">
-        {/* Background Track */}
-        <div className="absolute inset-y-0 left-0 right-0 h-2 bg-eq-slider-track rounded-full my-auto" />
-
-        {/* Active Fill */}
+      <div className="relative flex h-8 min-w-0 flex-1 items-center">
+        <div className="absolute left-0 right-0 h-[10px] rounded-full bg-[#e8ecf3] shadow-inner" />
         <div
-          className={cn(
-            "absolute h-2 rounded-full transition-[width] duration-100 ease-out",
-            {
-              "bg-gradient-to-r from-eq-volume to-eq-accent-glow": !isMuted,
-              "bg-eq-danger": isMuted,
-            },
-          )}
+          className="signal-fill absolute left-0 h-[10px] rounded-full transition-[width,opacity] duration-150"
           style={{
-            width: `${isMuted ? 0 : (isDragging ? tempVolume : volume)}%`,
-            boxShadow: !isMuted
-              ? `0 0 8px hsla(var(--eq-volume), 0.4)`
-              : "none",
+            width: `${displayedVolume}%`,
+            opacity: isMuted ? 0.35 : 1,
           }}
         />
-
-        {/* Slider Input */}
         <input
           type="range"
           aria-label="Volume"
+          aria-valuetext={`${displayedVolume} percent`}
           min="0"
           max="100"
           step="1"
-          value={isMuted ? 0 : (isDragging ? tempVolume : volume)}
-          onInput={(e) =>
-            setTempVolume(parseInt((e.target as HTMLInputElement).value))
-          }
-          onMouseDown={() => setIsDragging(true)}
-          onMouseUp={(e) => {
-            setIsDragging(false);
-            onVolumeChange(parseInt((e.target as HTMLInputElement).value));
+          value={displayedVolume}
+          onChange={(event) => {
+            const nextVolume = Number(event.target.value);
+            setTemporaryVolume(nextVolume);
+            if (!isDragging.current) onVolumeChange(nextVolume);
           }}
-          className={cn(
-            "absolute inset-0 w-full h-full opacity-0 cursor-pointer",
-            "focus:outline-none",
-          )}
-        />
-
-        {/* Thumb Indicator */}
-        <div
-          className={cn(
-            "absolute w-5 h-5 rounded-full border-2 border-eq-background",
-            "transition-colors duration-150 ease-out pointer-events-none",
-            {
-              "bg-eq-volume shadow-lg shadow-eq-volume/50 scale-110":
-                !isMuted && (isDragging || volume > 0),
-              "bg-eq-danger shadow-lg shadow-eq-danger/50": isMuted,
-              "bg-eq-text-dim": !isMuted && volume === 0,
-            },
-          )}
-          style={{
-            left: `${isMuted ? 0 : (isDragging ? tempVolume : volume)}%`,
-            transform: "translateX(-50%)",
-            top: "50%",
-            marginTop: "-10px",
+          onPointerDown={() => {
+            isDragging.current = true;
           }}
+          onPointerUp={commitPointerValue}
+          onPointerCancel={commitPointerValue}
+          className="volume-range absolute inset-0 z-[2] h-full w-full"
         />
       </div>
 
-      {/* Volume Percentage */}
-      <div className="text-sm font-mono text-eq-text-dim w-12 text-right">
-        {isMuted ? "0%" : `${isDragging ? tempVolume : volume}%`}
-      </div>
-    </div>
+      <output className="data-type w-[54px] text-right text-[14px] font-semibold text-[#262b36]">
+        {displayedVolume}%
+      </output>
+    </section>
   );
 };
