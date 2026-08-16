@@ -1,5 +1,6 @@
 {
   "manifest_version": 3,
+  "minimum_chrome_version": "116",
   "name": "Super Dribble Audio Amplifier",
   "version": "1.0",
   "description": "A Chrome extension to amplify and control audio in any tab.",
@@ -23,6 +24,9 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
@@ -33,20 +37,5 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
-  },
-  "web_accessible_resources": [
-    {
-      "resources": [
-        "wasm/equalizer/equalizer.wasm",
-        "wasm/equalizer/equalizer.js",
-        "wasm/equalizer/presets.lua",
-        "wasm/spatializer/spatializer.wasm",
-        "wasm/spatializer/spatializer.js",
-        "wasm/spatializer/spatializer_presets.lua",
-        "utils/lua-preset-parser.js",
-        "lua/fengari.min.js"
-      ],
-      "matches": ["<all_urls>"]
-    }
-  ]
+  }
 }

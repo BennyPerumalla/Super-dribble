@@ -1,5 +1,5 @@
 /*****************************************************************************
- * equalizer.cpp: Core DSP logic for a 16-band parametric equalizer
+ * equalizer.cpp: Core DSP for gain and 10-band parametric equalization
  *****************************************************************************
  * Copyright (C) 2024 Benny Perumalla
  *
@@ -9,158 +9,134 @@
  * under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation; either version 2.1 of the License, or
  * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License
- * along with this program; if not, write to the Free Software Foundation,
- * Inc., 51 Franklin Street, Fifth Floor, Boston MA 02110-1301, USA.
- *****************************************************************************/
+ ******************************************************************************/
 
+#include <algorithm>
 #include <cmath>
 
-const double PI = 3.14159265358979323846;
-const int MAX_BANDS = 16;
+namespace {
 
-/**
- * @class BiquadFilter
- * @brief Implements a single second-order IIR filter (biquad).
- *
- * This class holds the coefficients and state for one filter band.
- * The processSample method is designed to be lock-free and real-time safe,
- * making it suitable for use in an audio processing callback.
- */
+constexpr float kPi = 3.14159265358979323846f;
+constexpr int kBandCount = 10;
+
 class BiquadFilter {
 public:
-    double a0, a1, a2, b1, b2; // Filter coefficients
-    double z1, z2;             // Filter state (delay line)
+    float b0 = 1.0f;
+    float b1 = 0.0f;
+    float b2 = 0.0f;
+    float a1 = 0.0f;
+    float a2 = 0.0f;
+    float z1 = 0.0f;
+    float z2 = 0.0f;
 
-    BiquadFilter() : a0(1.0), a1(0.0), a2(0.0), b1(0.0), b2(0.0), z1(0.0), z2(0.0) {}
+    float process(float input) {
+        const float output = input * b0 + z1;
+        z1 = input * b1 - a1 * output + z2;
+        z2 = input * b2 - a2 * output;
+        return output;
+    }
 
-    /**
-     * Processes a single audio sample.
-     * @param in The input sample.
-     * @return The filtered output sample.
-     */
-    double processSample(double in) {
-        double out = in * a0 + z1;
-        z1 = in * a1 - b1 * out + z2;
-        z2 = in * a2 - b2 * out;
-        return out;
+    void setPeaking(float sampleRate, float frequency, float gainDb, float q) {
+        const float amplitude = std::pow(10.0f, gainDb / 40.0f);
+        const float omega = 2.0f * kPi * frequency / sampleRate;
+        const float alpha = std::sin(omega) / (2.0f * q);
+        const float cosine = std::cos(omega);
+        const float denominator = 1.0f + alpha / amplitude;
+
+        b0 = (1.0f + alpha * amplitude) / denominator;
+        b1 = (-2.0f * cosine) / denominator;
+        b2 = (1.0f - alpha * amplitude) / denominator;
+        a1 = (-2.0f * cosine) / denominator;
+        a2 = (1.0f - alpha / amplitude) / denominator;
     }
 };
 
-/**
- * @class Equalizer
- * @brief Manages a chain of 16 biquad filters.
- *
- * This is the main class that will be exposed to JavaScript via WASM bindings.
- * It provides an interface to set parameters for each band and to process
- * a buffer of audio data.
- */
 class Equalizer {
-private:
-    double sampleRate;
-    BiquadFilter bandsLeft[MAX_BANDS];
-    BiquadFilter bandsRight[MAX_BANDS];
-
 public:
-    Equalizer(double rate) : sampleRate(rate) {}
+    explicit Equalizer(float sampleRate)
+        : sampleRate_(sampleRate),
+          gainSmoothing_(std::exp(-1.0f / (0.01f * sampleRate))) {}
 
-    /**
-     * Sets the parameters for a specific EQ band.
-     * This function recalculates the biquad coefficients based on the provided
-     * frequency, gain (in dB), and Q factor.
-     *
-     * @param bandIndex The index of the band to modify (0-15).
-     * @param frequency The center frequency of the band in Hz.
-     * @param gainDb The gain in decibels (dB).
-     * @param q The Q factor (bandwidth).
-     */
-    
-    void setBand(int bandIndex, double frequency, double gainDb, double q) {
-        if (bandIndex < 0 || bandIndex >= MAX_BANDS) {
+    void setVolumePercent(float percent) {
+        if (!std::isfinite(percent)) {
             return;
         }
-        
-        if (q <= 0.0) return;
-        if(frequency <= 0.0 || frequency > sampleRate / 2.0) return;
-    
-        // This is a standard formula for a peaking EQ filter, derived from the
-        // Audio EQ Cookbook by Robert Bristow-Johnson.
-        double A = pow(10, gainDb / 40.0);
-        double w0 = 2.0 * PI * frequency / sampleRate;
-        double cos_w0 = cos(w0);
-        double sin_w0 = sin(w0);
-        double alpha = sin_w0 / (2.0 * q);
+        targetGain_ = std::clamp(percent, 0.0f, 400.0f) / 100.0f;
+    }
 
-        double b0_coeff = 1.0 + alpha * A;
-        double b1_coeff = -2.0 * cos_w0;
-        double b2_coeff = 1.0 - alpha * A;
-        double a0_coeff = 1.0 + alpha / A;
-        double a1_coeff = -2.0 * cos_w0;
-        double a2_coeff = 1.0 - alpha / A;
+    void setBand(int bandIndex, float frequency, float gainDb, float q) {
+        if (bandIndex < 0 || bandIndex >= kBandCount || !std::isfinite(frequency)
+            || !std::isfinite(gainDb) || !std::isfinite(q) || q <= 0.0f) {
+            return;
+        }
 
-        for(int ch = 0; ch < 2; ch++) {
-            BiquadFilter& band = ch == 0 ? bandsLeft[bandIndex] : bandsRight[bandIndex];
-            band.b1 = b1_coeff / a0_coeff;
-            band.b2 = b2_coeff / a0_coeff;
-            band.a0 = b0_coeff / a0_coeff;
-            band.a1 = a1_coeff / a0_coeff;
-            band.a2 = a2_coeff / a0_coeff;
+        const float nyquist = sampleRate_ * 0.5f;
+        if (frequency <= 0.0f || frequency >= nyquist) {
+            return;
+        }
+
+        const float clampedGain = std::clamp(gainDb, -24.0f, 24.0f);
+        leftBands_[bandIndex].setPeaking(sampleRate_, frequency, clampedGain, q);
+        rightBands_[bandIndex].setPeaking(sampleRate_, frequency, clampedGain, q);
+    }
+
+    void process(float* left, float* right, int frameCount) {
+        if (!left || !right || frameCount <= 0) {
+            return;
+        }
+
+        for (int frame = 0; frame < frameCount; ++frame) {
+            currentGain_ = targetGain_ + gainSmoothing_ * (currentGain_ - targetGain_);
+
+            float leftSample = left[frame];
+            float rightSample = right[frame];
+            for (int band = 0; band < kBandCount; ++band) {
+                leftSample = leftBands_[band].process(leftSample);
+                rightSample = rightBands_[band].process(rightSample);
+            }
+
+            left[frame] = std::clamp(leftSample * currentGain_, -1.0f, 1.0f);
+            right[frame] = std::clamp(rightSample * currentGain_, -1.0f, 1.0f);
         }
     }
 
-    /**
-     * Processes a block of audio samples in place.
-     * The input buffer is modified directly with the output.
-     *
-     * @param buffer A pointer to an interleaved stereo audio buffer.
-     * @param numSamples The number of samples in the buffer.
-     */
-    void process(float* buffer, int numSamples) {
-
-        for (int i = 0; i < numSamples; i += 2) {
-            // Process left channel
-            double sampleLeft = buffer[i];
-            for (int j = 0; j < MAX_BANDS; ++j) {
-                sampleLeft = bandsLeft[j].processSample(sampleLeft);
-            }
-            // Simple hard clipping for safety. A proper limiter would be better in a full implementation.
-            if (sampleLeft > 1.0) sampleLeft = 1.0;
-            if (sampleLeft < -1.0) sampleLeft = -1.0;
-            buffer[i] = (float)sampleLeft;
-
-            // Process right channel
-            double sampleRight = buffer[i + 1];
-            for (int j = 0; j < MAX_BANDS; ++j) {
-                sampleRight = bandsRight[j].processSample(sampleRight);
-            }
-            if (sampleRight > 1.0) sampleRight = 1.0;
-            if (sampleRight < -1.0) sampleRight = -1.0;
-            buffer[i + 1] = (float)sampleRight;
-        }
-    }
+private:
+    float sampleRate_;
+    float currentGain_ = 1.0f;
+    float targetGain_ = 1.0f;
+    float gainSmoothing_;
+    BiquadFilter leftBands_[kBandCount];
+    BiquadFilter rightBands_[kBandCount];
 };
 
-// These functions provide a C-compatible interface for JavaScript to interact with the C++ classes.
+}  // namespace
+
 extern "C" {
-    Equalizer* create_equalizer(double sampleRate) {
-        return new Equalizer(sampleRate);
-    }
 
-    void destroy_equalizer(Equalizer* eq) {
-        delete eq;
-    }
+Equalizer* create_equalizer(float sampleRate) {
+    return new Equalizer(sampleRate);
+}
 
-    void set_band(Equalizer* eq, int bandIndex, double frequency, double gainDb, double q) {
-        eq->setBand(bandIndex, frequency, gainDb, q);
-    }
+void destroy_equalizer(Equalizer* equalizer) {
+    delete equalizer;
+}
 
-    void process_buffer(Equalizer* eq, float* buffer, int numSamples) {
-        eq->process(buffer, numSamples);
+void set_volume_percent(Equalizer* equalizer, float percent) {
+    if (equalizer) {
+        equalizer->setVolumePercent(percent);
     }
+}
+
+void set_band(Equalizer* equalizer, int bandIndex, float frequency, float gainDb, float q) {
+    if (equalizer) {
+        equalizer->setBand(bandIndex, frequency, gainDb, q);
+    }
+}
+
+void process_buffer(Equalizer* equalizer, float* left, float* right, int frameCount) {
+    if (equalizer) {
+        equalizer->process(left, right, frameCount);
+    }
+}
+
 }

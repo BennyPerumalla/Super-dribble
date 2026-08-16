@@ -1,162 +1,310 @@
-// Handles audio processing to keep it alive when the popup closes.
-
-console.log('Super Dribble Audio Engine (Offscreen) v1.1 Loaded');
+console.log('Super Dribble WASM Audio Engine loaded');
 
 let audioContext = null;
 let sourceNode = null;
-let gainNode = null;
-let eqNodes = [];
+let equalizerNode = null;
+let spatializerNode = null;
+let spatializerCreating = null;
+let activeStream = null;
 let isProcessing = false;
+let pipelineGeneration = 0;
+let spatializerGeneration = 0;
 
-const FREQUENCY_BANDS = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+const wasmModuleCache = new Map();
 
-// Listen for messages from the extension
-chrome.runtime.onMessage.addListener(async (request, sender, sendResponse) => {
-  if (request.target !== 'offscreen') return;
+const EQUALIZER_WORKLET_PATH = 'wasm/equalizer/equalizer-worklet.js';
+const EQUALIZER_WASM_PATH = 'wasm/equalizer/equalizer.wasm';
+const SPATIALIZER_WORKLET_PATH = 'wasm/spatializer/spatializer-worklet.js';
+const SPATIALIZER_WASM_PATH = 'wasm/spatializer/spatializer.wasm';
 
-  switch (request.action) {
-    case 'start_capture':
-      handleStartCapture(request.streamId, sendResponse);
-      return true; // Async response
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.target !== 'offscreen') return false;
 
-    case 'stop_capture':
-      stopProcessing();
-      sendResponse({ success: true });
-      break;
-
-    case 'set_volume':
-      if (gainNode && audioContext) {
-        const volume = request.value / 100;
-        gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
-        sendResponse({ success: true });
-      } else {
-        sendResponse({ success: false, error: 'Audio not initialized' });
+  (async () => {
+    try {
+      switch (request.action) {
+        case 'start_capture':
+          await startProcessing(request);
+          sendResponse({ success: true });
+          break;
+        case 'stop_capture':
+          await stopProcessing();
+          sendResponse({ success: true });
+          break;
+        case 'set_volume':
+          requireEqualizer().port.postMessage({ type: 'set-volume', value: request.value });
+          sendResponse({ success: true });
+          break;
+        case 'update_eq':
+          requireEqualizer().port.postMessage({
+            type: 'set-band',
+            index: request.bandIndex,
+            gainDb: request.gainDb,
+          });
+          sendResponse({ success: true });
+          break;
+        case 'update_eq_preset':
+          requireEqualizer().port.postMessage({ type: 'set-eq', values: request.preset?.values ?? [] });
+          sendResponse({ success: true });
+          break;
+        case 'update_spatializer':
+          if (request.params == null) {
+            disableSpatializer();
+          } else {
+            await ensureSpatializer(request.params);
+          }
+          sendResponse({ success: true });
+          break;
+        default:
+          sendResponse({ success: false, error: `Unknown offscreen action: ${request.action}` });
       }
-      break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('Offscreen audio error:', error);
+      sendResponse({ success: false, error: message });
+    }
+  })();
 
-    case 'update_eq': // Update single band
-        if (isProcessing && audioContext && request.bandIndex >= 0 && request.bandIndex < eqNodes.length) {
-            eqNodes[request.bandIndex].gain.setValueAtTime(request.gainDb, audioContext.currentTime);
-            sendResponse({ success: true });
-        } else {
-            sendResponse({ success: false, error: 'Audio not initialized or invalid band' });
-        }
-       break;
-
-    case 'update_eq_preset': // Update all bands
-        if (isProcessing && audioContext && request.preset && request.preset.values) {
-             request.preset.values.forEach((gainDb, index) => {
-                 if (index < eqNodes.length) {
-                    eqNodes[index].gain.setValueAtTime(gainDb, audioContext.currentTime);
-                 }
-             });
-             sendResponse({ success: true });
-        } else {
-             sendResponse({ success: false, error: 'Audio not initialized or invalid preset' });
-        }
-        break;
-      
-    default:
-       console.warn('Unknown action in offscreen:', request.action);
-       sendResponse({ success: false, error: 'Unknown action' });
-  }
+  return true;
 });
 
-let activeStream = null;
+async function startProcessing(request) {
+  if (isProcessing || audioContext || activeStream) await stopProcessing();
 
-async function handleStartCapture(streamId, sendResponse) {
-    try {
-        if (isProcessing) {
-            stopProcessing();
-        }
+  const generation = ++pipelineGeneration;
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      mandatory: {
+        chromeMediaSource: 'tab',
+        chromeMediaSourceId: request.streamId,
+      },
+    },
+    video: false,
+  });
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                mandatory: {
-                    chromeMediaSource: 'tab',
-                    chromeMediaSourceId: streamId
-                }
-            },
-            video: false
-        });
-        
-        activeStream = stream;
+  if (generation !== pipelineGeneration) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error('Audio pipeline start was superseded');
+  }
 
-        // Initialize Audio Context
-        audioContext = new AudioContext();
-        
-        // Connect graph: Source -> Gain -> EQ Bands -> Destination
-        sourceNode = audioContext.createMediaStreamSource(stream);
-        gainNode = audioContext.createGain();
-        gainNode.gain.value = 1.0; // Default unity gain (volume handled by gainNode)
+  try {
+    activeStream = stream;
+    const context = new AudioContext({ latencyHint: 'interactive' });
+    audioContext = context;
 
-        // Create EQ Nodes
-        eqNodes = FREQUENCY_BANDS.map(frequency => {
-            const filter = audioContext.createBiquadFilter();
-            filter.type = 'peaking';
-            filter.frequency.value = frequency;
-            filter.Q.value = 1.0;
-            filter.gain.value = 0;
-            return filter;
-        });
+    const [equalizerModule] = await Promise.all([
+      compileWasmModule(EQUALIZER_WASM_PATH),
+      context.audioWorklet.addModule(chrome.runtime.getURL(EQUALIZER_WORKLET_PATH)),
+    ]);
+    assertPipelineActive(generation, context);
 
-        // Connect Chain
-        let currentNode = sourceNode;
-        currentNode.connect(gainNode);
-        currentNode = gainNode;
+    const equalizer = new AudioWorkletNode(context, 'super-dribble-equalizer', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [2],
+      channelCount: 2,
+      channelCountMode: 'explicit',
+      channelInterpretation: 'speakers',
+      processorOptions: {
+        wasmModule: equalizerModule,
+        initialState: {
+          volume: request.volume ?? 100,
+          eqValues: request.eqValues ?? new Array(10).fill(0),
+        },
+      },
+    });
+    equalizerNode = equalizer;
+    await waitForProcessor(equalizer, 'equalizer');
+    assertPipelineActive(generation, context);
 
-        eqNodes.forEach(filter => {
-            currentNode.connect(filter);
-            currentNode = filter;
-        });
-
-        currentNode.connect(audioContext.destination);
-
-        isProcessing = true;
-        
-        // Handle stream ending (e.g. tab closed)
-        stream.addEventListener('inactive', () => {
-             stopProcessing();
-             chrome.runtime.sendMessage({ action: 'capture_stopped' });
-        });
-
-        console.log('Offscreen audio processing started with EQ.');
-        sendResponse({ success: true });
-
-    } catch (error) {
-        console.error('Failed to start offscreen capture:', error);
-        // Notify background/UI of the error
-        chrome.runtime.sendMessage({
-            action: 'capture_error',
-            error: error.message,
-            stack: error.stack
-        });
-        sendResponse({ success: false, error: error.message });
+    equalizer.connect(context.destination);
+    if (request.spatializerEnabled && request.spatializerParams) {
+      await ensureSpatializer(request.spatializerParams, generation);
     }
+
+    assertPipelineActive(generation, context);
+    const source = context.createMediaStreamSource(stream);
+    source.connect(equalizer);
+    sourceNode = source;
+
+    stream.addEventListener('inactive', () => {
+      if (generation !== pipelineGeneration || activeStream !== stream) return;
+      stopProcessing().finally(() => chrome.runtime.sendMessage({ action: 'capture_stopped' }));
+    }, { once: true });
+
+    await context.resume();
+    assertPipelineActive(generation, context);
+    isProcessing = true;
+    console.log('Audio path: MediaStreamSource -> Equalizer WASM -> optional Spatializer WASM -> Destination');
+  } catch (error) {
+    const isCurrentGeneration = generation === pipelineGeneration;
+    await stopProcessing();
+    if (isCurrentGeneration) {
+      chrome.runtime.sendMessage({
+        action: 'capture_error',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    throw error;
+  }
 }
 
-function stopProcessing() {
-    if (sourceNode) {
-        sourceNode.disconnect();
-        sourceNode = null;
-    }
-    if (gainNode) {
-        gainNode.disconnect();
-        gainNode = null;
-    }
-    eqNodes.forEach(node => node.disconnect());
-    eqNodes = [];
+async function ensureSpatializer(params, expectedGeneration = pipelineGeneration) {
+  const context = audioContext;
+  const equalizer = equalizerNode;
+  if (!context || !equalizer) throw new Error('Audio pipeline is not initialized');
 
-    if (audioContext) {
-        audioContext.close();
-        audioContext = null;
-    }
-    
-    // Stop all media tracks to release the capture
-    if (activeStream) {
-        activeStream.getTracks().forEach(track => track.stop());
-        activeStream = null;
-    }
+  if (spatializerNode) {
+    spatializerNode.port.postMessage({ type: 'set-params', params });
+    return spatializerNode;
+  }
+  if (spatializerCreating) {
+    const node = await spatializerCreating;
+    node.port.postMessage({ type: 'set-params', params });
+    return node;
+  }
 
-    isProcessing = false;
+  const creationGeneration = ++spatializerGeneration;
+  const creation = (async () => {
+    let node = null;
+    try {
+      const [spatializerModule] = await Promise.all([
+        compileWasmModule(SPATIALIZER_WASM_PATH),
+        context.audioWorklet.addModule(chrome.runtime.getURL(SPATIALIZER_WORKLET_PATH)),
+      ]);
+      assertPipelineActive(expectedGeneration, context, equalizer);
+      assertSpatializerActive(creationGeneration);
+
+      node = new AudioWorkletNode(context, 'super-dribble-spatializer', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2],
+        channelCount: 2,
+        channelCountMode: 'explicit',
+        channelInterpretation: 'speakers',
+        processorOptions: { wasmModule: spatializerModule, initialParams: params },
+      });
+      await waitForProcessor(node, 'spatializer');
+      assertPipelineActive(expectedGeneration, context, equalizer);
+      assertSpatializerActive(creationGeneration);
+
+      equalizer.disconnect();
+      equalizer.connect(node);
+      node.connect(context.destination);
+      spatializerNode = node;
+      return node;
+    } catch (error) {
+      node?.port.postMessage({ type: 'dispose' });
+      node?.disconnect();
+      throw error;
+    }
+  })();
+  spatializerCreating = creation;
+
+  try {
+    return await creation;
+  } finally {
+    if (spatializerCreating === creation) spatializerCreating = null;
+  }
+}
+
+function disableSpatializer() {
+  spatializerGeneration += 1;
+  spatializerCreating = null;
+
+  const node = spatializerNode;
+  spatializerNode = null;
+  if (!node || !equalizerNode || !audioContext) return;
+
+  equalizerNode.disconnect();
+  equalizerNode.connect(audioContext.destination);
+  node.port.postMessage({ type: 'dispose' });
+  node.disconnect();
+}
+
+async function compileWasmModule(resourcePath) {
+  if (!wasmModuleCache.has(resourcePath)) {
+    const compilation = (async () => {
+      const response = await fetch(chrome.runtime.getURL(resourcePath));
+      if (!response.ok) throw new Error(`Failed to load ${resourcePath}: ${response.status}`);
+      return WebAssembly.compile(await response.arrayBuffer());
+    })().catch((error) => {
+      wasmModuleCache.delete(resourcePath);
+      throw error;
+    });
+    wasmModuleCache.set(resourcePath, compilation);
+  }
+  return wasmModuleCache.get(resourcePath);
+}
+
+function waitForProcessor(node, label) {
+  return new Promise((resolve, reject) => {
+    const settle = (callback, value) => {
+      clearTimeout(timeout);
+      node.port.removeEventListener('message', onMessage);
+      callback(value);
+    };
+    const onMessage = (event) => {
+      if (event.data?.type === 'ready') {
+        settle(resolve);
+      } else if (event.data?.type === 'error') {
+        settle(reject, new Error(event.data.error || `${label} WASM initialization failed`));
+      }
+    };
+    const timeout = setTimeout(
+      () => settle(reject, new Error(`${label} WASM initialization timed out`)),
+      5000,
+    );
+    node.port.addEventListener('message', onMessage);
+    node.port.start();
+  });
+}
+
+function assertPipelineActive(generation, context, equalizer = equalizerNode) {
+  if (
+    generation !== pipelineGeneration
+    || audioContext !== context
+    || (equalizer && equalizerNode !== equalizer)
+  ) {
+    throw new Error('Audio pipeline operation was superseded');
+  }
+}
+
+function assertSpatializerActive(generation) {
+  if (generation !== spatializerGeneration) {
+    throw new Error('Spatializer initialization was superseded');
+  }
+}
+
+function requireEqualizer() {
+  if (!isProcessing || !equalizerNode) throw new Error('Audio pipeline is not initialized');
+  return equalizerNode;
+}
+
+async function stopProcessing() {
+  pipelineGeneration += 1;
+  spatializerGeneration += 1;
+  isProcessing = false;
+  spatializerCreating = null;
+
+  const source = sourceNode;
+  const equalizer = equalizerNode;
+  const spatializer = spatializerNode;
+  const stream = activeStream;
+  const context = audioContext;
+
+  sourceNode = null;
+  equalizerNode = null;
+  spatializerNode = null;
+  activeStream = null;
+  audioContext = null;
+
+  source?.disconnect();
+  equalizer?.port.postMessage({ type: 'dispose' });
+  equalizer?.disconnect();
+  spatializer?.port.postMessage({ type: 'dispose' });
+  spatializer?.disconnect();
+
+  stream?.getTracks().forEach((track) => track.stop());
+  if (context && context.state !== 'closed') await context.close();
 }

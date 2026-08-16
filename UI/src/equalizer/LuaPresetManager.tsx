@@ -3,9 +3,8 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/card";
 import { Badge } from "@/components/badge";
-import { Loader2, FileText, Play, Download, AlertCircle } from "lucide-react";
+import { Loader2, FileText, Play, Download } from "lucide-react";
 import { audioService } from "@/lib/audioService";
-import { LuaPresetParser } from "@/utils/lua-preset-parser";
 
 interface LuaPreset {
   name: string;
@@ -43,19 +42,9 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
   const loadLuaPresets = async () => {
     setLoading(true);
     try {
-      // Initialize the parser
-      const parser = new LuaPresetParser();
-      const isInitialized = await parser.initialize();
-
-      if (!isInitialized) {
-        console.error("Failed to initialize Lua engine");
-        return;
-      }
-
-      // Load both types of presets directly from the parser
       const [eqPresets, spatPresets] = await Promise.all([
-        parser.loadEqualizerPresets(),
-        parser.loadSpatializerPresets()
+        audioService.loadLuaPresets("equalizer"),
+        audioService.loadLuaPresets("spatializer"),
       ]);
 
       setEqualizerPresets(eqPresets as LuaPreset[]);

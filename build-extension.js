@@ -1,97 +1,130 @@
 #!/usr/bin/env node
 
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync, execSync } = require('node:child_process');
 
-console.log('🔧 Building Super Dribble Chrome Extension...\n');
+const ROOT = __dirname;
+const OUTPUT_ROOT = path.join(ROOT, 'output');
+const PACKAGE_ROOT = path.join(OUTPUT_ROOT, 'super-dribble-extension');
 
-// Check if UI build exists
-const uiBuildPath = path.join(__dirname, 'UI/build');
-if (!fs.existsSync(uiBuildPath)) {
-    console.log('📦 Building UI...');
-    const { execSync } = require('child_process');
-    try {
-        execSync('npm run build', { cwd: path.join(__dirname, 'UI'), stdio: 'inherit' });
-        console.log('✅ UI built successfully');
-    } catch (error) {
-        console.error('❌ UI build failed:', error.message);
-        process.exit(1);
-    }
-} else {
-    console.log('✅ UI build already exists');
-}
-
-// Check required files
-const requiredFiles = [
-    'manifest.json',
-    'background.js',
-    'content.js',
-    'UI/build/index.html',
-    'wasm/equalizer/equalizer.wasm',
-    'wasm/equalizer/equalizer.js',
-    'wasm/equalizer/presets.lua',
-    'wasm/spatializer/spatializer.wasm',
-    'wasm/spatializer/spatializer.js',
-    'wasm/spatializer/spatializer_presets.lua',
-    'utils/lua-preset-parser.js',
-    'lua/fengari.min.js',
-    'icons/icon128.png'
+const runtimeFiles = [
+  'manifest.json',
+  'background.js',
+  'content.js',
+  'offscreen.html',
+  'offscreen.js',
+  'icons/icon16.png',
+  'icons/icon48.png',
+  'icons/icon128.png',
+  'lua/fengari.min.js',
+  'wasm/equalizer/equalizer.wasm',
+  'wasm/equalizer/equalizer-worklet.js',
+  'wasm/equalizer/presets.lua',
+  'wasm/spatializer/spatializer.wasm',
+  'wasm/spatializer/spatializer-worklet.js',
+  'wasm/spatializer/spatializer_presets.lua',
 ];
 
-console.log('\n🔍 Verifying required files...');
-let allFilesExist = true;
+const runtimeDirectories = ['UI/build'];
 
-requiredFiles.forEach(file => {
-    const filePath = path.join(__dirname, file);
-    if (fs.existsSync(filePath)) {
-        const stats = fs.statSync(filePath);
-        if (stats.size > 0) {
-            console.log(`✅ ${file} (${(stats.size / 1024).toFixed(1)}KB)`);
-        } else {
-            console.log(`⚠️  ${file} (empty file)`);
-            allFilesExist = false;
-        }
-    } else {
-        console.log(`❌ ${file} (missing)`);
-        allFilesExist = false;
-    }
-});
+function runBuilds() {
+  console.log('Building WASM DSP modules...');
+  execFileSync(process.execPath, [path.join(ROOT, 'build-wasm.js')], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
 
-if (!allFilesExist) {
-    console.log('\n❌ Some required files are missing or empty.');
-    console.log('Please run the following commands:');
-    console.log('1. Build WASM modules: & "$Env:EMSDK_NODE" .\\build-wasm.js');
-    console.log('2. Build UI: cd UI && npm run build');
-    process.exit(1);
+  console.log('\nBuilding UI...');
+  execSync('pnpm run build', {
+    cwd: path.join(ROOT, 'UI'),
+    stdio: 'inherit',
+  });
 }
 
-// Create a simple extension package info
-const packageInfo = {
-    name: 'Super Dribble',
-    version: '1.0.0',
-    description: 'Advanced audio equalizer and spatializer Chrome extension',
-    buildDate: new Date().toISOString(),
-    features: [
-        'WebAssembly DSP Engine',
-        'Lua Preset System',
-        '16-band Parametric Equalizer',
-        'Spatializer Effects',
-        'Real-time Audio Processing'
-    ]
+function assertRuntimeInputs() {
+  const missingFiles = runtimeFiles.filter((relativePath) => {
+    const sourcePath = path.join(ROOT, relativePath);
+    return !fs.existsSync(sourcePath) || fs.statSync(sourcePath).size === 0;
+  });
+  const missingDirectories = runtimeDirectories.filter((relativePath) => {
+    const sourcePath = path.join(ROOT, relativePath);
+    return !fs.existsSync(sourcePath)
+      || !fs.statSync(sourcePath).isDirectory()
+      || fs.readdirSync(sourcePath).length === 0;
+  });
+  const missing = [...missingFiles, ...missingDirectories];
+
+  if (missing.length > 0) {
+    throw new Error(`Runtime build inputs are missing or empty:\n${missing.join('\n')}`);
+  }
+}
+
+function copyRuntimePackage() {
+  fs.mkdirSync(OUTPUT_ROOT, { recursive: true });
+  fs.rmSync(PACKAGE_ROOT, { recursive: true, force: true });
+  fs.mkdirSync(PACKAGE_ROOT, { recursive: true });
+
+  for (const relativePath of runtimeFiles) {
+    const sourcePath = path.join(ROOT, relativePath);
+    const destinationPath = path.join(PACKAGE_ROOT, relativePath);
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+  }
+
+  for (const relativePath of runtimeDirectories) {
+    fs.cpSync(path.join(ROOT, relativePath), path.join(PACKAGE_ROOT, relativePath), {
+      recursive: true,
+    });
+  }
+}
+
+function directorySize(directoryPath) {
+  let bytes = 0;
+  const pending = [directoryPath];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const entryPath = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(entryPath);
+      else if (entry.isFile()) bytes += fs.statSync(entryPath).size;
+    }
+  }
+  return bytes;
+}
+
+function main() {
+  console.log('Building Super Dribble Chrome Extension...\n');
+  runBuilds();
+  assertRuntimeInputs();
+  copyRuntimePackage();
+
+  execFileSync(process.execPath, [path.join(ROOT, 'verify-extension.js'), PACKAGE_ROOT], {
+    cwd: ROOT,
+    stdio: 'inherit',
+  });
+
+  const packageBytes = directorySize(PACKAGE_ROOT);
+  console.log('\nExtension package created successfully.');
+  console.log(`Package: ${PACKAGE_ROOT}`);
+  console.log(`Size: ${(packageBytes / 1024 / 1024).toFixed(2)} MB`);
+  console.log('\nLoad this exact folder in chrome://extensions:');
+  console.log(PACKAGE_ROOT);
+}
+
+if (require.main === module) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
+}
+
+module.exports = {
+  PACKAGE_ROOT,
+  copyRuntimePackage,
+  directorySize,
+  runtimeDirectories,
+  runtimeFiles,
 };
-
-fs.writeFileSync(path.join(__dirname, 'extension-info.json'), JSON.stringify(packageInfo, null, 2));
-
-console.log('\n🎉 Extension build completed successfully!');
-console.log('\n📋 To load in Chrome:');
-console.log('1. Open Chrome and go to chrome://extensions/');
-console.log('2. Enable "Developer mode" (toggle in top right)');
-console.log('3. Click "Load unpacked"');
-console.log('4. Select this directory: ' + __dirname);
-console.log('5. The extension should appear in your extensions list');
-console.log('6. Click the extension icon to open the equalizer interface');
-console.log('\n🔧 Extension Info:');
-console.log(`   Name: ${packageInfo.name}`);
-console.log(`   Version: ${packageInfo.version}`);
-console.log(`   Build Date: ${new Date(packageInfo.buildDate).toLocaleString()}`);
-console.log(`   Features: ${packageInfo.features.length} active`);

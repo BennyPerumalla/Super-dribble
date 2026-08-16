@@ -1,6 +1,8 @@
 // Audio service for communicating with the background script
 // Updated to use Offscreen Document pattern
 
+import { LuaPresetParser } from "@/utils/lua-preset-parser";
+
 export interface AudioStatus {
   isProcessing: boolean;
   isInitialized: boolean;
@@ -8,11 +10,22 @@ export interface AudioStatus {
   volume?: number;
   eqValues?: number[];
   preset?: string;
+  spatializerParams?: SpatializerParams | null;
 }
 
 export interface EQPreset {
   name: string;
   values: number[];
+}
+
+export interface SpatializerParams {
+  width?: number;
+  decay?: number;
+  damping?: number;
+  mix?: number;
+  crossoverFrequency?: number;
+  lowWidthFactor?: number;
+  highWidthFactor?: number;
 }
 
 class AudioService {
@@ -79,26 +92,11 @@ class AudioService {
         throw new Error('Cannot capture audio from browser internal pages');
       }
 
-      // Get Media Stream ID
-      const streamId = await new Promise<string>((resolve, reject) => {
-        (chrome.tabCapture as any).getMediaStreamId({ 
-            targetTabId: this.capturedTabId 
-        }, (streamId: string) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else {
-            resolve(streamId);
-          }
-        });
-      });
-
-      console.log('Got Stream ID:', streamId);
-
-      // Send to background to start offscreen processing
+      // The service worker must create the stream ID so Chrome can authorize
+      // the offscreen document to consume it.
       const response = await chrome.runtime.sendMessage({
           action: 'start_capture',
-          streamId: streamId,
-          tabId: this.capturedTabId // Send tabId for state tracking
+          tabId: this.capturedTabId
       });
 
       if (response && response.success) {
@@ -176,6 +174,11 @@ class AudioService {
   async updateEQPreset(preset: EQPreset): Promise<boolean> {
      if (!this.isInitialized) await this.checkConnection();
      return this.sendControlMessage('update_eq_preset', { preset });
+  }
+
+  async updateSpatializer(params: SpatializerParams): Promise<boolean> {
+     if (!this.isInitialized) await this.checkConnection();
+     return this.sendControlMessage('update_spatializer', { params });
   }
 
   private async sendControlMessage(action: string, data: any): Promise<boolean> {
@@ -258,14 +261,17 @@ class AudioService {
     }
   }
 
-  // Load Lua presets (Proxy to background -> which should proxy to Offscreen/WASM if needed, 
-  // but currently Lua parser is in background? Wait, background WAS handling Lua.)
-  // We need to move Lua handling to offscreen or keep it in background if it's just parsing.
-  // Reviewing background.js: I removed Lua parser.
-  // So we need to re-implement Lua or make sure offscreen handles it.
-  // For now, return empty to prevent crash.
   async loadLuaPresets(presetType: 'equalizer' | 'spatializer'): Promise<any[]> {
-      return []; 
+      const parser = new LuaPresetParser();
+      const isInitialized = await parser.initialize();
+
+      if (!isInitialized) {
+          throw new Error('Failed to initialize Lua preset parser');
+      }
+
+      return presetType === 'equalizer'
+          ? parser.loadEqualizerPresets()
+          : parser.loadSpatializerPresets();
   }
 
   async applyLuaPreset(presetType: 'equalizer' | 'spatializer', preset: any): Promise<boolean> {
@@ -281,10 +287,8 @@ class AudioService {
               values: values
           });
       } else if (presetType === 'spatializer') {
-          // Send spatializer params if supported (currently only EQ is fully impemented in offscreen.js)
-          // We can add spatializer support later, but for now just acknowledge.
-          console.log('Applying spatializer preset:', preset);
-          return true; 
+          if (!preset.params) return false;
+          return this.updateSpatializer(preset.params);
       }
       return false;
   }

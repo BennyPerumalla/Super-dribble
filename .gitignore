@@ -20,6 +20,7 @@ yarn-error.log*
 dist/
 build/
 out/
+output/
 UI/build/
 
 # Framework & tooling caches
@@ -51,6 +52,7 @@ ehthumbs.db
 
 # WebAssembly & temp
 *.wasm
+emsdk/
 *.js.mem
 *.tmp
 
