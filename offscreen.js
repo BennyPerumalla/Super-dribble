@@ -1,5 +1,11 @@
 console.log('Super Dribble WASM Audio Engine loaded');
 
+function normalizeEqValues(values) {
+  return Array.from({ length: 10 }, (_, index) => (
+    Number.isFinite(values?.[index]) ? values[index] : 0
+  ));
+}
+
 let audioContext = null;
 let sourceNode = null;
 let equalizerNode = null;
@@ -7,6 +13,11 @@ let spatializerNode = null;
 let spatializerCreating = null;
 let activeStream = null;
 let isProcessing = false;
+let activeTabId = null;
+let currentVolume = 100;
+let currentEqValues = normalizeEqValues();
+let currentPreset = 'Flat';
+let currentSpatializerParams = null;
 let pipelineGeneration = 0;
 let spatializerGeneration = 0;
 
@@ -33,6 +44,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           break;
         case 'set_volume':
           requireEqualizer().port.postMessage({ type: 'set-volume', value: request.value });
+          currentVolume = request.value;
           sendResponse({ success: true });
           break;
         case 'update_eq':
@@ -41,19 +53,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             index: request.bandIndex,
             gainDb: request.gainDb,
           });
+          if (Number.isInteger(request.bandIndex) && request.bandIndex >= 0 && request.bandIndex < 10) {
+            currentEqValues[request.bandIndex] = request.gainDb;
+            currentPreset = 'Custom';
+          }
           sendResponse({ success: true });
           break;
         case 'update_eq_preset':
           requireEqualizer().port.postMessage({ type: 'set-eq', values: request.preset?.values ?? [] });
+          currentEqValues = normalizeEqValues(request.preset?.values ?? currentEqValues);
+          currentPreset = request.preset?.name || 'Custom';
           sendResponse({ success: true });
           break;
         case 'update_spatializer':
           if (request.params == null) {
             disableSpatializer();
+            currentSpatializerParams = null;
           } else {
             await ensureSpatializer(request.params);
+            currentSpatializerParams = { ...request.params };
           }
           sendResponse({ success: true });
+          break;
+        case 'get_status':
+          sendResponse({
+            success: true,
+            isInitialized: isProcessing,
+            isProcessing,
+            activeTabId,
+            volume: currentVolume,
+            eqValues: [...currentEqValues],
+            preset: currentPreset,
+            spatializerParams: currentSpatializerParams,
+          });
           break;
         default:
           sendResponse({ success: false, error: `Unknown offscreen action: ${request.action}` });
@@ -135,6 +167,13 @@ async function startProcessing(request) {
     await context.resume();
     assertPipelineActive(generation, context);
     isProcessing = true;
+    activeTabId = request.tabId ?? null;
+    currentVolume = request.volume ?? 100;
+    currentEqValues = normalizeEqValues(request.eqValues);
+    currentPreset = request.preset || 'Flat';
+    currentSpatializerParams = request.spatializerEnabled && request.spatializerParams
+      ? { ...request.spatializerParams }
+      : null;
     console.log('Audio path: MediaStreamSource -> Equalizer WASM -> optional Spatializer WASM -> Destination');
   } catch (error) {
     const isCurrentGeneration = generation === pipelineGeneration;
@@ -285,6 +324,7 @@ async function stopProcessing() {
   pipelineGeneration += 1;
   spatializerGeneration += 1;
   isProcessing = false;
+  activeTabId = null;
   spatializerCreating = null;
 
   const source = sourceNode;

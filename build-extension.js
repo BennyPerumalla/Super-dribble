@@ -2,11 +2,12 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { execFileSync, execSync } = require('node:child_process');
+const { execFileSync, execSync, spawnSync } = require('node:child_process');
 
 const ROOT = __dirname;
 const OUTPUT_ROOT = path.join(ROOT, 'output');
 const PACKAGE_ROOT = path.join(OUTPUT_ROOT, 'super-dribble-extension');
+const ZIP_PATH = path.join(OUTPUT_ROOT, 'super-dribble-extension.zip');
 
 const runtimeFiles = [
   'manifest.json',
@@ -93,6 +94,37 @@ function directorySize(directoryPath) {
   return bytes;
 }
 
+function createReleaseArchive() {
+  fs.rmSync(ZIP_PATH, { force: true });
+
+  let result;
+  if (process.platform === 'win32') {
+    const quotePowerShell = (value) => value.replaceAll("'", "''");
+    const packageGlob = `${quotePowerShell(PACKAGE_ROOT)}\\*`;
+    const archivePath = quotePowerShell(ZIP_PATH);
+    result = spawnSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        `Compress-Archive -Path '${packageGlob}' -DestinationPath '${archivePath}' -CompressionLevel Optimal -Force`,
+      ],
+      { cwd: ROOT, stdio: 'inherit', shell: false },
+    );
+  } else {
+    result = spawnSync('zip', ['-q', '-r', ZIP_PATH, '.'], {
+      cwd: PACKAGE_ROOT,
+      stdio: 'inherit',
+      shell: false,
+    });
+  }
+
+  if (result.status !== 0 || !fs.existsSync(ZIP_PATH)) {
+    throw new Error('Could not create the Chrome Web Store ZIP archive');
+  }
+}
+
 function main() {
   console.log('Building Super Dribble Chrome Extension...\n');
   runBuilds();
@@ -103,11 +135,15 @@ function main() {
     cwd: ROOT,
     stdio: 'inherit',
   });
+  createReleaseArchive();
 
   const packageBytes = directorySize(PACKAGE_ROOT);
+  const archiveBytes = fs.statSync(ZIP_PATH).size;
   console.log('\nExtension package created successfully.');
   console.log(`Package: ${PACKAGE_ROOT}`);
   console.log(`Size: ${(packageBytes / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`Web Store ZIP: ${ZIP_PATH}`);
+  console.log(`ZIP size: ${(archiveBytes / 1024 / 1024).toFixed(2)} MB`);
   console.log('\nLoad this exact folder in chrome://extensions:');
   console.log(PACKAGE_ROOT);
 }
@@ -123,7 +159,9 @@ if (require.main === module) {
 
 module.exports = {
   PACKAGE_ROOT,
+  ZIP_PATH,
   copyRuntimePackage,
+  createReleaseArchive,
   directorySize,
   runtimeDirectories,
   runtimeFiles,

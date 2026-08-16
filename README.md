@@ -66,6 +66,7 @@ Do not load the repository root. It contains development dependencies and may in
 - **Content Script** (`content.js`): Injected into web pages to ensure extension presence
 - **UI** (`UI/`): React-based popup interface with TypeScript
 - **C++ DSP** (`wasm/`): Gain, equalization, filtering, stereo widening, and reverb calculations
+- **Least-privilege injection**: Page controls are injected only into the active tab after the user opens the extension; no broad host access is requested
 
 ### Audio Processing Chain
 
@@ -94,6 +95,8 @@ Presets are defined in Lua format for maximum flexibility:
 
 - `activeTab`: Access to the currently active tab
 - `tabCapture`: Capture audio from browser tabs
+- `scripting`: Inject media controls into the user-invoked active tab
+- `offscreen`: Keep the WASM audio graph alive while the popup is closed
 
 ## Development
 
@@ -136,13 +139,15 @@ Super-dribble/
 
 ### Building
 
-Build both WASM modules, compile the UI, create the minimal extension folder, and verify it:
+Build both WASM modules, compile the UI, create the minimal extension folder and Chrome Web Store ZIP, and verify them:
 
 ```bash
 node build-extension.js
 ```
 
 Load `output/super-dribble-extension` in Chrome. The repository root is a development workspace, not an extension package.
+
+Upload `output/super-dribble-extension.zip` to the Chrome Web Store. The ZIP contains the extension files at its root and excludes source code, dependencies, tests, documentation, and the Emscripten SDK.
 
 #### UI Build
 

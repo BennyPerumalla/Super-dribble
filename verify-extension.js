@@ -197,7 +197,6 @@ try {
     "permissions",
     "action",
     "background",
-    "content_scripts",
   ];
 
   requiredManifestFields.forEach((field) => {
@@ -208,6 +207,35 @@ try {
       allFilesPresent = false;
     }
   });
+
+  const requiredPermissions = new Set([
+    "activeTab",
+    "tabCapture",
+    "scripting",
+    "offscreen",
+  ]);
+  const declaredPermissions = new Set(manifest.permissions || []);
+  const missingPermissions = [...requiredPermissions].filter(
+    (permission) => !declaredPermissions.has(permission),
+  );
+  const unexpectedPermissions = [...declaredPermissions].filter(
+    (permission) => !requiredPermissions.has(permission),
+  );
+  if (missingPermissions.length > 0 || unexpectedPermissions.length > 0) {
+    console.log(
+      `Manifest permissions must be limited to: ${[...requiredPermissions].join(", ")}`,
+    );
+    allFilesPresent = false;
+  } else {
+    console.log("Manifest uses only user-invoked capture permissions");
+  }
+
+  if (manifest.content_scripts || manifest.host_permissions) {
+    console.log("Manifest must not request broad host access or automatic injection");
+    allFilesPresent = false;
+  } else {
+    console.log("No broad host access or automatic content-script injection");
+  }
 
   // Check popup path
   if (manifest.action && manifest.action.default_popup) {
@@ -255,7 +283,7 @@ if (fs.existsSync(uiBuildPath)) {
       .filter((asset) => !/^(?:[a-z]+:|\/\/|#)/i.test(asset));
 
     if (localAssets.length === 0) {
-      console.log("UI index does not reference any local build assets");
+      console.log("giUI index does not reference any local build assets");
       allFilesPresent = false;
     }
 

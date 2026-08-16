@@ -31,6 +31,54 @@ export interface SpatializerParams {
 class AudioService {
   private isInitialized = false;
   private capturedTabId: number | null = null;
+  private contentScriptReadiness = new Map<number, Promise<boolean>>();
+
+  private sendRawTabMessage<T = any>(tabId: number, message: any): Promise<T | null> {
+    return new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, message, (response: T) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+        } else {
+          resolve(response ?? null);
+        }
+      });
+    });
+  }
+
+  private async ensureContentScript(tabId: number): Promise<boolean> {
+    const pending = this.contentScriptReadiness.get(tabId);
+    if (pending) return pending;
+
+    const readiness = (async () => {
+      const ping = await this.sendRawTabMessage<{ success?: boolean }>(tabId, { action: 'ping' });
+      if (ping?.success) return true;
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          chrome.scripting.executeScript(
+            { target: { tabId }, files: ['content.js'] },
+            () => {
+              const error = chrome.runtime.lastError;
+              if (error) reject(new Error(error.message));
+              else resolve();
+            },
+          );
+        });
+      } catch {
+        return false;
+      }
+
+      const injectedPing = await this.sendRawTabMessage<{ success?: boolean }>(tabId, { action: 'ping' });
+      return !!injectedPing?.success;
+    })();
+
+    this.contentScriptReadiness.set(tabId, readiness);
+    try {
+      return await readiness;
+    } finally {
+      this.contentScriptReadiness.delete(tabId);
+    }
+  }
 
   private async sendMessageToTab<T = any>(message: any, tabId?: number | null): Promise<T> {
     const ensureTabId = async () => {
@@ -42,23 +90,8 @@ class AudioService {
     const targetTabId = await ensureTabId();
     if (!targetTabId) throw new Error('No active tab available');
 
-    // Wrap callback-style API to Promise for reliability across Chrome versions
-    return new Promise((resolve, reject) => {
-      try {
-        // @ts-ignore sendMessage callback signature
-        chrome.tabs.sendMessage(targetTabId, message, (response: any) => {
-          const err = chrome.runtime.lastError;
-          if (err) {
-            // Ignore error if we just can't reach the content script (it might not be loaded yet)
-            resolve(null as any); 
-          } else {
-            resolve(response);
-          }
-        });
-      } catch (e) {
-        reject(e);
-      }
-    });
+    if (!(await this.ensureContentScript(targetTabId))) return null as T;
+    return (await this.sendRawTabMessage<T>(targetTabId, message)) as T;
   }
 
   // Initialize audio capture via Offscreen Document

@@ -1,5 +1,8 @@
-// Content script for Super Dribble Audio Amplifier
-// This script is injected into web pages to ensure the extension is active
+// Content script for Super Dribble Audio Amplifier.
+// It is injected only after the user invokes the extension on the active tab.
+(function initializeSuperDribbleContentScript() {
+  if (globalThis.__superDribbleContentScriptLoaded) return;
+  globalThis.__superDribbleContentScriptLoaded = true;
 
 console.log('Super Dribble Audio Amplifier content script loaded');
 
@@ -251,3 +254,4 @@ try {
 } catch (e) {
   // Ignore invalidation errors on init
 }
+})();

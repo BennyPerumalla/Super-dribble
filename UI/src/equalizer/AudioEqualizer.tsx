@@ -277,6 +277,7 @@ if (!isPowerOn) {
           <button
             onClick={handleToggleAudioConnection}
             disabled={isConnecting}
+            aria-label={isAudioInitialized ? "Disconnect audio" : "Connect audio"}
             className={cn(
               "p-2 rounded-lg transition-all duration-200",
               isAudioInitialized
@@ -292,6 +293,7 @@ if (!isPowerOn) {
           {/* Close Button */}
           <button
             onClick={() => window.close()}
+            aria-label="Close extension popup"
             className={cn(
               "p-2 rounded-lg text-eq-text-dim hover:text-eq-accent",
               "hover:bg-eq-surface-light transition-all duration-200",
@@ -304,6 +306,8 @@ if (!isPowerOn) {
           {/* Settings Button */}
           <button
             onClick={() => setIsPowerOn(false)}
+            aria-label="Manage Lua presets"
+            title="Manage Lua presets"
             className={cn(
               "p-2 rounded-lg text-eq-text-dim hover:text-eq-danger",
               "hover:bg-eq-surface-light transition-all duration-200",
@@ -374,6 +378,7 @@ if (!isPowerOn) {
           <button
             onClick={handlePlayPause}
             disabled={!isAudioInitialized}
+            aria-label={isPlaying ? "Pause playback" : "Play playback"}
             className={cn(
               "p-1.5 rounded-lg transition-all duration-200",
               isAudioInitialized

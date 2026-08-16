@@ -4,7 +4,7 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-function loadBackground() {
+function loadBackground({ offscreenStatus = null } = {}) {
   const listeners = [];
   const sentMessages = [];
   const contextQueries = [];
@@ -23,6 +23,9 @@ function loadBackground() {
       },
       async sendMessage(message) {
         sentMessages.push(message);
+        if (message.action === 'get_status' && message.target === 'offscreen' && offscreenStatus) {
+          return offscreenStatus;
+        }
         return { success: true };
       },
     },
@@ -109,6 +112,23 @@ test('capture_stopped clears state after the stream becomes inactive', async () 
   assert.equal(status.activeTabId, null);
 });
 
+test('status is recovered from the offscreen engine after service-worker suspension', async () => {
+  const offscreenStatus = {
+    success: true,
+    isInitialized: true,
+    isProcessing: true,
+    activeTabId: 77,
+    volume: 135,
+    eqValues: [1, 2, 3, 4, 5, 4, 3, 2, 1, 0],
+    preset: 'Recovered',
+    spatializerParams: { width: 1.2, mix: 0.3 },
+  };
+  const { listener } = loadBackground({ offscreenStatus });
+
+  const status = await dispatch(listener, { action: 'get_status' });
+  assert.deepEqual(JSON.parse(JSON.stringify(status)), offscreenStatus);
+});
+
 test('start sends cached DSP state in one offscreen initialization message', async () => {
   const { captureRequests, listener, sentMessages } = loadBackground();
 
@@ -125,6 +145,18 @@ test('start sends cached DSP state in one offscreen initialization message', asy
   assert.equal(sentMessages[0].spatializerEnabled, false);
 });
 
+test('preset state is normalized to ten finite equalizer bands', async () => {
+  const { listener } = loadBackground();
+
+  await dispatch(listener, {
+    action: 'update_eq_preset',
+    preset: { name: 'Malformed', values: [3, Number.NaN] },
+  });
+
+  const status = await dispatch(listener, { action: 'get_status' });
+  assert.deepEqual(Array.from(status.eqValues), [3, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+});
+
 test('spatializer state is forwarded lazily and restored on the next capture', async () => {
   const { listener, sentMessages } = loadBackground();
   const params = { width: 1.5, decay: 0.7, damping: 0.4, mix: 0.25 };
@@ -132,14 +164,18 @@ test('spatializer state is forwarded lazily and restored on the next capture', a
   await dispatch(listener, { action: 'start_capture', streamId: 'stream-4', tabId: 22 });
   await dispatch(listener, { action: 'update_spatializer', params });
 
-  assert.equal(sentMessages[1].action, 'update_spatializer');
-  assert.deepEqual(JSON.parse(JSON.stringify(sentMessages[1].params)), params);
+  const spatializerUpdate = sentMessages.find((message) => message.action === 'update_spatializer');
+  assert.equal(spatializerUpdate?.action, 'update_spatializer');
+  assert.deepEqual(JSON.parse(JSON.stringify(spatializerUpdate.params)), params);
   assert.deepEqual(
     JSON.parse(JSON.stringify((await dispatch(listener, { action: 'get_status' })).spatializerParams)),
     params,
   );
 
   await dispatch(listener, { action: 'start_capture', streamId: 'stream-5', tabId: 23 });
-  assert.equal(sentMessages[2].spatializerEnabled, true);
-  assert.deepEqual(JSON.parse(JSON.stringify(sentMessages[2].spatializerParams)), params);
+  const restoredStart = sentMessages
+    .filter((message) => message.action === 'start_capture')
+    .at(-1);
+  assert.equal(restoredStart?.spatializerEnabled, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(restoredStart.spatializerParams)), params);
 });

@@ -38,6 +38,7 @@ export const VolumeControl: React.FC<VolumeControlProps> = ({
       {/* Mute Button */}
       <button
         onClick={onToggleMute}
+        aria-label={isMuted ? "Unmute audio" : "Mute audio"}
         className={cn(
           "p-2 rounded-lg transition-all duration-150 ease-out",
           "hover:bg-eq-surface-light hover:scale-105",
@@ -75,6 +76,7 @@ export const VolumeControl: React.FC<VolumeControlProps> = ({
         {/* Slider Input */}
         <input
           type="range"
+          aria-label="Volume"
           min="0"
           max="100"
           step="1"

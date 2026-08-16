@@ -103,7 +103,7 @@ export const EqualizerBand: React.FC<EqualizerBandProps> = ({
   const fillStyle = getFillStyle();
 
   return (
-    <div className={cn("flex flex-col items-center space-y-2 flex-shrink-0 w-16", className)}>
+    <div className={cn("flex flex-col items-center space-y-2 flex-shrink-0 w-14", className)}>
       {/* Frequency Label */}
       <div className="text-xs font-mono text-eq-text-dim font-medium h-4 flex items-center justify-center w-full">
         {frequency}
@@ -112,6 +112,7 @@ export const EqualizerBand: React.FC<EqualizerBandProps> = ({
       {/* Plus Button */}
       <button
         onClick={handleIncrement}
+        aria-label={`Increase ${frequency} gain`}
         className={cn(
           "w-6 h-6 flex items-center justify-center rounded text-xs font-bold transition-all duration-150",
           "bg-eq-slider-track hover:bg-eq-accent/20 text-eq-text-dim hover:text-eq-accent",
@@ -185,6 +186,7 @@ export const EqualizerBand: React.FC<EqualizerBandProps> = ({
       {/* Minus Button */}
       <button
         onClick={handleDecrement}
+        aria-label={`Decrease ${frequency} gain`}
         className={cn(
           "w-6 h-6 flex items-center justify-center rounded text-xs font-bold transition-all duration-150",
           "bg-eq-slider-track hover:bg-eq-accent/20 text-eq-text-dim hover:text-eq-accent",

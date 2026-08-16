@@ -45,11 +45,17 @@ async function closeOffscreenDocument() {
   await chrome.offscreen.closeDocument();
 }
 
+function normalizeEqValues(values) {
+  return Array.from({ length: 10 }, (_, index) => (
+    Number.isFinite(values?.[index]) ? values[index] : 0
+  ));
+}
+
 // Track active capture state
 let activeStreamId = null;
 let activeTabId = null;
 let currentVolume = 100; // Default to 100 (1.0 gain)
-let currentEqValues = new Array(10).fill(0); // Default flat
+let currentEqValues = normalizeEqValues(); // Default flat
 let currentPreset = 'Flat';
 let currentSpatializerParams = null;
 
@@ -70,6 +76,24 @@ function getTabCaptureStreamId(tabId) {
       }
     });
   });
+}
+
+async function getOffscreenStatus() {
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [chrome.runtime.getURL('offscreen.html')],
+  });
+  if (contexts.length === 0) return null;
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'get_status',
+      target: 'offscreen',
+    });
+    return typeof response?.isProcessing === 'boolean' ? response : null;
+  } catch {
+    return null;
+  }
 }
 
 // Handle messages from UI and Content Scripts
@@ -100,6 +124,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           tabId: request.tabId,
           volume: currentVolume,
           eqValues: currentEqValues,
+          preset: currentPreset,
           spatializerEnabled: !!currentSpatializerParams,
           spatializerParams: currentSpatializerParams,
         });
@@ -142,7 +167,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
              }
          } else if (request.action === 'update_eq_preset') {
              if (request.preset && request.preset.values) {
-                 currentEqValues = [...request.preset.values];
+                  currentEqValues = normalizeEqValues(request.preset.values);
                  currentPreset = request.preset.name || 'Custom';
              }
          } else if (request.action === 'update_spatializer') {
@@ -157,8 +182,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
          sendResponse(controlResponse?.success === false ? controlResponse : { success: true });
       }
       else if (request.action === 'get_status') {
-          // Return the actual tracking state
-          sendResponse({ 
+          const engineStatus = await getOffscreenStatus();
+          if (engineStatus) {
+              activeTabId = engineStatus.activeTabId ?? null;
+              activeStreamId = engineStatus.isProcessing ? 'offscreen-active' : null;
+              currentVolume = engineStatus.volume ?? currentVolume;
+              currentEqValues = normalizeEqValues(engineStatus.eqValues ?? currentEqValues);
+              currentPreset = engineStatus.preset ?? currentPreset;
+              currentSpatializerParams = engineStatus.spatializerParams ?? null;
+          }
+
+          sendResponse(engineStatus || {
               isInitialized: !!activeStreamId,
               activeTabId: activeTabId,
               isProcessing: !!activeStreamId,
@@ -166,14 +200,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               eqValues: currentEqValues,
               preset: currentPreset,
               spatializerParams: currentSpatializerParams
-          }); 
+          });
       }
       else {
           sendResponse({ success: false, error: 'Unknown action or unhandled' });
       }
     } catch (error) {
       console.error('Background error:', error);
-      sendResponse({ success: false, error: error.message });
+      sendResponse({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   })();
 

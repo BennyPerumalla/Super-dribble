@@ -7,7 +7,6 @@ npm-debug.log*
 npm-debug.log.*
 
 # pnpm
-pnpm-lock.yaml
 pnpm-workspace.yaml
 .pnpm-store/
 
@@ -26,6 +25,7 @@ UI/build/
 # Framework & tooling caches
 .vite/
 .cache/
+.playwright-cli/
 .parcel-cache/
 .next/
 .storybook-static/

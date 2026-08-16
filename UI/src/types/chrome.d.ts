@@ -36,7 +36,10 @@ declare namespace chrome {
   }
 
   namespace scripting {
-    function executeScript(details: any, callback?: (injectionResults: any[]) => void): void;
+    function executeScript(
+      details: { target: { tabId: number }; files: string[] },
+      callback?: (injectionResults: any[]) => void,
+    ): void;
   }
 }
 
