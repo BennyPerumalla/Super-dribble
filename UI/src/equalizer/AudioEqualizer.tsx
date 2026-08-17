@@ -73,7 +73,20 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
 
   const resetVisualization = useCallback(() => {
     incomingEnergy.current.fill(0);
+    displayedEnergy.current.fill(0);
+    peakEnergy.current.fill(0);
     lastEnergyUpdate.current = 0;
+
+    for (let index = 0; index < energyNodes.current.length; index += 1) {
+      const node = energyNodes.current[index];
+      if (!node) continue;
+      node.style.setProperty("--energy-height", "0%");
+      node.style.setProperty("--energy-opacity", ".18");
+      node.style.setProperty("--energy-shadow", "3px");
+      node.style.setProperty("--peak-position", "0%");
+      node.style.setProperty("--peak-opacity", "0");
+      node.dataset.state = "idle";
+    }
   }, []);
 
   const handleBandChange = useCallback(
@@ -216,29 +229,61 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
         return;
       }
 
+      const sampledAt = Number(request.sampledAt);
+      if (!Number.isFinite(sampledAt)) return;
+
+      const latency = Math.max(
+        0,
+        performance.timeOrigin + performance.now() - sampledAt,
+      );
+      const metrics = visualizationLatency.current;
+      metrics.count += 1;
+      metrics.total += latency;
+      metrics.max = Math.max(metrics.max, latency);
+      if (metrics.count >= 120) {
+        console.debug("Visualization transport latency", {
+          averageMs: Math.round((metrics.total / metrics.count) * 100) / 100,
+          maxMs: Math.round(metrics.max * 100) / 100,
+        });
+        visualizationLatency.current = { count: 0, total: 0, max: 0 };
+      }
+
+      if (sampledAt <= lastEnergyUpdate.current || latency > 120) return;
+      lastEnergyUpdate.current = sampledAt;
+
       for (let index = 0; index < incomingEnergy.current.length; index += 1) {
         const nextValue = Number(request.energy[index]);
-        incomingEnergy.current[index] = Number.isFinite(nextValue)
+        const energy = Number.isFinite(nextValue)
           ? Math.min(1, Math.max(0, nextValue))
           : 0;
-      }
-      lastEnergyUpdate.current = performance.now();
+        incomingEnergy.current[index] = energy;
+        displayedEnergy.current[index] = energy;
+        peakEnergy.current[index] = energy;
 
-      if (Number.isFinite(request.sampledAt)) {
-        const latency = Math.max(
-          0,
-          performance.timeOrigin + performance.now() - request.sampledAt,
+        const node = energyNodes.current[index];
+        if (!node) continue;
+        node.style.setProperty(
+          "--energy-height",
+          `${(energy * 100).toFixed(2)}%`,
         );
-        const metrics = visualizationLatency.current;
-        metrics.count += 1;
-        metrics.total += latency;
-        metrics.max = Math.max(metrics.max, latency);
-        if (metrics.count >= 120) {
-          console.debug("Visualization transport latency", {
-            averageMs: Math.round((metrics.total / metrics.count) * 100) / 100,
-            maxMs: Math.round(metrics.max * 100) / 100,
-          });
-          visualizationLatency.current = { count: 0, total: 0, max: 0 };
+        node.style.setProperty(
+          "--energy-opacity",
+          (0.18 + energy * 0.62).toFixed(3),
+        );
+        node.style.setProperty(
+          "--energy-shadow",
+          `${(3 + energy * 8).toFixed(2)}px`,
+        );
+        node.style.setProperty(
+          "--peak-position",
+          `${(energy * 100).toFixed(2)}%`,
+        );
+        node.style.setProperty("--peak-opacity", (energy * 0.48).toFixed(3));
+
+        const state =
+          energy > 0.78 ? "peak" : energy > 0.025 ? "active" : "idle";
+        if (node.dataset.state !== state) {
+          node.dataset.state = state;
         }
       }
     };
@@ -262,26 +307,23 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
     const render = (time: number) => {
       const deltaSeconds = Math.min(0.1, (time - previousTime) / 1000);
       previousTime = time;
-      const releaseRate = reducedMotion ? 5 : 10;
-      const peakRelease = reducedMotion ? 0.7 : 1.35;
+      const attackRate = reducedMotion ? 60 : 120;
+      const releaseRate = reducedMotion ? 40 : 60;
 
       for (let index = 0; index < displayedEnergy.current.length; index += 1) {
-        const hasFreshSpectrum = time - lastEnergyUpdate.current < 100;
+        const hasFreshSpectrum =
+          performance.timeOrigin + time - lastEnergyUpdate.current < 150;
         const target =
           isAudioInitialized && hasFreshSpectrum
             ? incomingEnergy.current[index]
             : 0;
         const current = displayedEnergy.current[index];
-        const next = target > current
-          ? target
-          : current +
-            (target - current) *
-              (1 - Math.exp(-releaseRate * deltaSeconds));
+        const responseRate = target > current ? attackRate : releaseRate;
+        const next =
+          current +
+          (target - current) * (1 - Math.exp(-responseRate * deltaSeconds));
         displayedEnergy.current[index] = next < 0.0015 ? 0 : next;
-        peakEnergy.current[index] = Math.max(
-          displayedEnergy.current[index],
-          peakEnergy.current[index] - peakRelease * deltaSeconds,
-        );
+        peakEnergy.current[index] = displayedEnergy.current[index];
 
         const node = energyNodes.current[index];
         if (!node) continue;
@@ -303,16 +345,12 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
           "--peak-position",
           `${(peakValue * 100).toFixed(2)}%`,
         );
-        node.style.setProperty(
-          "--peak-opacity",
-          (peakValue * 0.48).toFixed(3),
-        );
-        node.dataset.state =
-          displayedEnergy.current[index] > 0.78
-            ? "peak"
-            : displayedEnergy.current[index] > 0.025
-              ? "active"
-              : "idle";
+        node.style.setProperty("--peak-opacity", (peakValue * 0.48).toFixed(3));
+        const state =
+          energyValue > 0.78 ? "peak" : energyValue > 0.025 ? "active" : "idle";
+        if (node.dataset.state !== state) {
+          node.dataset.state = state;
+        }
       }
 
       animationFrame = requestAnimationFrame(render);

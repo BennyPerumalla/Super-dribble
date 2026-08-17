@@ -6,8 +6,8 @@ const { execFileSync, execSync, spawnSync } = require('node:child_process');
 
 const ROOT = __dirname;
 const OUTPUT_ROOT = path.join(ROOT, 'output');
-const PACKAGE_ROOT = path.join(OUTPUT_ROOT, 'super-dribble-extension');
-const ZIP_PATH = path.join(OUTPUT_ROOT, 'super-dribble-extension.zip');
+const PACKAGE_ROOT = path.join(OUTPUT_ROOT, 'Super-Dribble');
+const ZIP_PATH = path.join(OUTPUT_ROOT, 'Super-Dribble.zip');
 
 const runtimeFiles = [
   'manifest.json',

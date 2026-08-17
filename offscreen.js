@@ -1,7 +1,6 @@
 import {
   calculateBandEnergies,
   createBandBinRanges,
-  smoothBandEnergies,
 } from './utils/audio-visualization.mjs';
 
 console.log('Super Dribble WASM Audio Engine loaded');
@@ -22,7 +21,6 @@ let analyserTimer = null;
 let analyserData = null;
 let analyserBandRanges = null;
 let analyserRawEnergy = null;
-let analyserSmoothedEnergy = null;
 let visualizationEnabled = false;
 let spatializerCreating = null;
 let activeStream = null;
@@ -53,8 +51,7 @@ const EQUALIZER_WASM_PATH = 'wasm/equalizer/equalizer.wasm';
 const SPATIALIZER_WORKLET_PATH = 'wasm/spatializer/spatializer-worklet.js';
 const SPATIALIZER_WASM_PATH = 'wasm/spatializer/spatializer.wasm';
 const VISUALIZATION_FFT_SIZE = 2048;
-const VISUALIZATION_FRAME_INTERVAL_MS = 16;
-const VISUALIZATION_FALLBACK_INTERVAL_MS = 32;
+const VISUALIZATION_FRAME_INTERVAL_MS = 1000 / 60;
 
 performanceMetrics = createPerformanceMetrics();
 
@@ -231,7 +228,6 @@ async function startProcessing(request) {
     analyserData = new Uint8Array(analyser.frequencyBinCount);
     analyserBandRanges = createBandBinRanges(context.sampleRate, analyser.fftSize);
     analyserRawEnergy = new Float32Array(analyserBandRanges.length);
-    analyserSmoothedEnergy = new Float32Array(analyserBandRanges.length);
     performanceMetrics.analyserInitMs = metricTime(analyserStartedAt);
     performanceMetrics.sampleRate = context.sampleRate;
     performanceMetrics.fftSize = analyser.fftSize;
@@ -272,8 +268,8 @@ async function startProcessing(request) {
     console.log('Audio startup metrics:', performanceMetrics);
   } catch (error) {
     const isCurrentGeneration = generation === pipelineGeneration;
-    await stopProcessing();
     if (isCurrentGeneration) {
+      await stopProcessing();
       chrome.runtime.sendMessage({
         action: 'capture_error',
         error: error instanceof Error ? error.message : String(error),
@@ -360,15 +356,18 @@ function startVisualizationSampling(generation) {
   stopVisualizationSampling();
   visualizationFrameCount = 0;
   visualizationFpsWindowStartedAt = performance.now();
+  let nextSampleAt = visualizationFpsWindowStartedAt;
 
   const sample = () => {
+    analyserTimer = null;
     if (generation !== pipelineGeneration || !isProcessing || !analyserNode) return;
+
     const sampleStartedAt = performance.now();
     analyserNode.getByteFrequencyData(analyserData);
     calculateBandEnergies(analyserData, analyserBandRanges, analyserRawEnergy);
-    smoothBandEnergies(analyserRawEnergy, analyserSmoothedEnergy, 0.9, 0.22);
-    for (let index = 0; index < analyserSmoothedEnergy.length; index += 1) {
-      visualizationFrameMessage.energy[index] = analyserSmoothedEnergy[index];
+
+    for (let index = 0; index < analyserRawEnergy.length; index += 1) {
+      visualizationFrameMessage.energy[index] = analyserRawEnergy[index];
     }
     visualizationFrameMessage.sampledAt = performance.timeOrigin + performance.now();
     visualizationChannel.postMessage(visualizationFrameMessage);
@@ -387,13 +386,24 @@ function startVisualizationSampling(generation) {
       visualizationFpsWindowStartedAt = now;
     }
 
-    const sampleCostMs = now - sampleStartedAt;
-    performanceMetrics.visualizationSampleMs = roundMetric(sampleCostMs);
-    const targetInterval = sampleCostMs > 8
-      ? VISUALIZATION_FALLBACK_INTERVAL_MS
-      : VISUALIZATION_FRAME_INTERVAL_MS;
-    analyserTimer = setTimeout(sample, Math.max(0, targetInterval - sampleCostMs));
+    performanceMetrics.visualizationSampleMs = roundMetric(now - sampleStartedAt);
+
+    // Keep a stable 60 Hz clock. Skip missed slots instead of emitting burst
+    // frames or switching between 60 and 30 FPS after a single slow sample.
+    nextSampleAt += VISUALIZATION_FRAME_INTERVAL_MS;
+    if (nextSampleAt <= now) {
+      const missedSlots = Math.floor(
+        (now - nextSampleAt) / VISUALIZATION_FRAME_INTERVAL_MS,
+      ) + 1;
+      nextSampleAt += missedSlots * VISUALIZATION_FRAME_INTERVAL_MS;
+    }
+
+    analyserTimer = setTimeout(
+      sample,
+      Math.max(0, nextSampleAt - performance.now()),
+    );
   };
+
   sample();
 }
 
@@ -439,8 +449,8 @@ function roundMetric(value) {
 }
 
 function readVisualizationEnergy() {
-  if (!analyserSmoothedEnergy) return new Array(10).fill(0);
-  return Array.from(analyserSmoothedEnergy);
+  if (!analyserRawEnergy) return new Array(10).fill(0);
+  return Array.from(analyserRawEnergy);
 }
 
 async function compileWasmModule(resourcePath) {
@@ -526,7 +536,6 @@ async function stopProcessing() {
   analyserData = null;
   analyserBandRanges = null;
   analyserRawEnergy = null;
-  analyserSmoothedEnergy = null;
   activeStream = null;
   audioContext = null;
 

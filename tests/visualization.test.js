@@ -72,8 +72,11 @@ test('offscreen visualization uses one analyser tap and broadcasts sampled frame
   assert.match(source, /VISUALIZATION_FFT_SIZE\s*=\s*2048/);
   assert.match(source, /smoothingTimeConstant\s*=\s*0\.1/);
   assert.match(source, /getByteFrequencyData/);
-  assert.match(source, /VISUALIZATION_FRAME_INTERVAL_MS\s*=\s*16/);
-  assert.match(source, /setTimeout\(sample/);
+  assert.match(source, /VISUALIZATION_FRAME_INTERVAL_MS\s*=\s*1000\s*\/\s*60/);
+  assert.match(source, /nextSampleAt/);
+  assert.match(source, /analyserRawEnergy/);
+  assert.doesNotMatch(source, /analyserSmoothedEnergy/);
+  assert.match(source, /setTimeout\(\s*sample/);
   assert.match(source, /new BroadcastChannel\('super-dribble-visualization'\)/);
   assert.match(source, /visualizationChannel\.postMessage/);
   assert.match(source, /sampledAt/);
@@ -95,4 +98,17 @@ test('visualization sampling is opt-in and stops when the popup disconnects', ()
   assert.match(offscreen, /if \(visualizationEnabled\) startVisualizationSampling/);
   assert.match(background, /super-dribble-visualization/);
   assert.match(background, /visualizationPorts/);
+});
+
+test('popup visualization rejects stale frames and resets rendered meters', () => {
+  const source = fs.readFileSync(
+    path.join(root, 'UI', 'src', 'equalizer', 'AudioEqualizer.tsx'),
+    'utf8',
+  );
+
+  assert.match(source, /sampledAt <= lastEnergyUpdate\.current/);
+  assert.match(source, /latency > 120/);
+  assert.match(source, /performance\.timeOrigin \+ time/);
+  assert.match(source, /displayedEnergy\.current\.fill\(0\)/);
+  assert.match(source, /node\.style\.setProperty\("--energy-height", "0%"\)/);
 });

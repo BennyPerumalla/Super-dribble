@@ -56,6 +56,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: super-dribble-extension
-          path: output/super-dribble-extension.zip
+          path: output/Super-Dribble.zip
           if-no-files-found: error
           retention-days: 14

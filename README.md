@@ -35,7 +35,7 @@ A Chrome extension that provides real-time audio amplification and equalization 
    - Open Chrome and go to `chrome://extensions/`
    - Enable "Developer mode" in the top right
    - Click "Load unpacked"
-   - Select `output/super-dribble-extension`
+   - Select `output/Super-Dribble`
 
 Do not load the repository root. It contains development dependencies and may include a local Emscripten SDK; Chrome counts every file below the selected unpacked-extension folder. The generated package contains only runtime assets and is verified to stay below 20 MB.
 
@@ -130,7 +130,7 @@ Super-dribble/
 │   │   └── types/           # TypeScript declarations
 │   └── build/               # Compiled UI files
 ├── output/
-│   └── super-dribble-extension/ # Runtime-only folder to load in Chrome
+│   └── Super-Dribble/ # Runtime-only folder to load in Chrome
 ├── README.md                # Project documentation
 ├── build-extension.js      # Builds and packages the extension
 ├── build-wasm.js           # WASM build script
@@ -145,9 +145,9 @@ Build both WASM modules, compile the UI, create the minimal extension folder and
 node build-extension.js
 ```
 
-Load `output/super-dribble-extension` in Chrome. The repository root is a development workspace, not an extension package.
+Load `output/Super-Dribble` in Chrome. The repository root is a development workspace, not an extension package.
 
-Upload `output/super-dribble-extension.zip` to the Chrome Web Store. The ZIP contains the extension files at its root and excludes source code, dependencies, tests, documentation, and the Emscripten SDK.
+Upload `output/Super-Dribble.zip` to the Chrome Web Store. The ZIP contains the extension files at its root and excludes source code, dependencies, tests, documentation, and the Emscripten SDK.
 
 #### UI Build
 
