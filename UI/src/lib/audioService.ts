@@ -1,8 +1,6 @@
 // Audio service for communicating with the background script
 // Updated to use Offscreen Document pattern
 
-import { LuaPresetParser } from "@/utils/lua-preset-parser";
-
 export interface AudioStatus {
   isProcessing: boolean;
   isInitialized: boolean;
@@ -112,8 +110,9 @@ class AudioService {
       const tab = tabs[0];
       this.capturedTabId = tab.id ?? null;
 
-      // Check if we are already connected to this tab
-      const existingStatus = await this.checkConnection();
+      // The active tab is already known, so avoid another tab query while
+      // restoring an existing session.
+      const existingStatus = await this.getStatus();
       if (existingStatus && existingStatus.isInitialized && existingStatus.activeTabId === this.capturedTabId) {
           console.log('Audio capture already active for this tab.');
           this.isInitialized = true;
@@ -151,8 +150,10 @@ class AudioService {
   async checkConnection(): Promise<AudioStatus | null> {
       if (!this.isAvailable()) return null;
       try {
-          const status = await this.getStatus();
-          const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+          const [status, tabs] = await Promise.all([
+            this.getStatus(),
+            chrome.tabs.query({ active: true, currentWindow: true }),
+          ]);
           const currentTabId = tabs[0]?.id;
 
           if (status && status.isInitialized && status.activeTabId === currentTabId) {
@@ -295,6 +296,7 @@ class AudioService {
   }
 
   async loadLuaPresets(presetType: 'equalizer' | 'spatializer'): Promise<any[]> {
+      const { LuaPresetParser } = await import("@/utils/lua-preset-parser");
       const parser = new LuaPresetParser();
       const isInitialized = await parser.initialize();
 

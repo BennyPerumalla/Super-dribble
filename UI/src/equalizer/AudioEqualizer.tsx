@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   Check,
@@ -20,8 +20,13 @@ import { audioService } from "@/lib/audioService";
 import FREQUENCY_BANDS from "@/constants/frequencyBands";
 import EQ_PRESETS, { EQPreset } from "@/constants/eq_presets";
 import { EqualizerBand } from "./EqualizerBand";
-import { LuaPresetManager } from "./LuaPresetManager";
 import { VolumeControl } from "./VolumeControl";
+
+const LuaPresetManager = React.lazy(() =>
+  import("./LuaPresetManager").then((module) => ({
+    default: module.LuaPresetManager,
+  })),
+);
 
 interface AudioEqualizerProps {
   className?: string;
@@ -57,6 +62,19 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
   );
 
   const isAudioAvailable = audioService.isAvailable();
+  const energyNodes = useRef<Array<HTMLDivElement | null>>(
+    new Array(10).fill(null),
+  );
+  const incomingEnergy = useRef(new Float32Array(10));
+  const displayedEnergy = useRef(new Float32Array(10));
+  const peakEnergy = useRef(new Float32Array(10));
+  const lastEnergyUpdate = useRef(0);
+  const visualizationLatency = useRef({ count: 0, total: 0, max: 0 });
+
+  const resetVisualization = useCallback(() => {
+    incomingEnergy.current.fill(0);
+    lastEnergyUpdate.current = 0;
+  }, []);
 
   const handleBandChange = useCallback(
     async (index: number, value: number) => {
@@ -133,6 +151,7 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
       await audioService.stopCapture();
       setIsAudioInitialized(false);
       setIsPlaying(false);
+      resetVisualization();
       return;
     }
 
@@ -146,15 +165,16 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
         return;
       }
 
-      const info = await audioService.getMediaInfo();
-      if (info) setIsPlaying(Boolean(info.isPlaying));
+      void audioService.getMediaInfo().then((info) => {
+        if (info) setIsPlaying(Boolean(info.isPlaying));
+      });
     } catch {
       setIsAudioInitialized(false);
       setConnectionError("Audio connection failed. Try another tab.");
     } finally {
       setIsConnecting(false);
     }
-  }, [isAudioInitialized]);
+  }, [isAudioInitialized, resetVisualization]);
 
   useEffect(() => {
     const listener = (request: any, sender: any) => {
@@ -179,6 +199,128 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!audioService.isAvailable()) return;
+
+    const port = chrome.runtime.connect({
+      name: "super-dribble-visualization",
+    });
+    const channel = new BroadcastChannel("super-dribble-visualization");
+    const listener = (event: MessageEvent) => {
+      const request = event.data;
+      if (
+        request?.action !== "visualization_update" ||
+        !Array.isArray(request.energy)
+      ) {
+        return;
+      }
+
+      for (let index = 0; index < incomingEnergy.current.length; index += 1) {
+        const nextValue = Number(request.energy[index]);
+        incomingEnergy.current[index] = Number.isFinite(nextValue)
+          ? Math.min(1, Math.max(0, nextValue))
+          : 0;
+      }
+      lastEnergyUpdate.current = performance.now();
+
+      if (Number.isFinite(request.sampledAt)) {
+        const latency = Math.max(
+          0,
+          performance.timeOrigin + performance.now() - request.sampledAt,
+        );
+        const metrics = visualizationLatency.current;
+        metrics.count += 1;
+        metrics.total += latency;
+        metrics.max = Math.max(metrics.max, latency);
+        if (metrics.count >= 120) {
+          console.debug("Visualization transport latency", {
+            averageMs: Math.round((metrics.total / metrics.count) * 100) / 100,
+            maxMs: Math.round(metrics.max * 100) / 100,
+          });
+          visualizationLatency.current = { count: 0, total: 0, max: 0 };
+        }
+      }
+    };
+
+    channel.addEventListener("message", listener);
+    return () => {
+      channel.removeEventListener("message", listener);
+      channel.close();
+      port.disconnect();
+      resetVisualization();
+    };
+  }, [resetVisualization]);
+
+  useEffect(() => {
+    let animationFrame = 0;
+    let previousTime = performance.now();
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+
+    const render = (time: number) => {
+      const deltaSeconds = Math.min(0.1, (time - previousTime) / 1000);
+      previousTime = time;
+      const releaseRate = reducedMotion ? 5 : 10;
+      const peakRelease = reducedMotion ? 0.7 : 1.35;
+
+      for (let index = 0; index < displayedEnergy.current.length; index += 1) {
+        const hasFreshSpectrum = time - lastEnergyUpdate.current < 100;
+        const target =
+          isAudioInitialized && hasFreshSpectrum
+            ? incomingEnergy.current[index]
+            : 0;
+        const current = displayedEnergy.current[index];
+        const next = target > current
+          ? target
+          : current +
+            (target - current) *
+              (1 - Math.exp(-releaseRate * deltaSeconds));
+        displayedEnergy.current[index] = next < 0.0015 ? 0 : next;
+        peakEnergy.current[index] = Math.max(
+          displayedEnergy.current[index],
+          peakEnergy.current[index] - peakRelease * deltaSeconds,
+        );
+
+        const node = energyNodes.current[index];
+        if (!node) continue;
+        const energyValue = displayedEnergy.current[index];
+        const peakValue = peakEnergy.current[index];
+        node.style.setProperty(
+          "--energy-height",
+          `${(energyValue * 100).toFixed(2)}%`,
+        );
+        node.style.setProperty(
+          "--energy-opacity",
+          (0.18 + energyValue * 0.62).toFixed(3),
+        );
+        node.style.setProperty(
+          "--energy-shadow",
+          `${(3 + energyValue * 8).toFixed(2)}px`,
+        );
+        node.style.setProperty(
+          "--peak-position",
+          `${(peakValue * 100).toFixed(2)}%`,
+        );
+        node.style.setProperty(
+          "--peak-opacity",
+          (peakValue * 0.48).toFixed(3),
+        );
+        node.dataset.state =
+          displayedEnergy.current[index] > 0.78
+            ? "peak"
+            : displayedEnergy.current[index] > 0.025
+              ? "active"
+              : "idle";
+      }
+
+      animationFrame = requestAnimationFrame(render);
+    };
+
+    animationFrame = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [isAudioInitialized]);
 
   useEffect(() => {
     const checkStatus = async () => {
@@ -376,7 +518,15 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
               </p>
             </div>
           </div>
-          <LuaPresetManager />
+          <React.Suspense
+            fallback={
+              <div className="surface-panel flex min-h-40 items-center justify-center text-[#7d8595]">
+                <LoaderCircle className="animate-spin" size={20} />
+              </div>
+            }
+          >
+            <LuaPresetManager />
+          </React.Suspense>
         </section>
       ) : (
         <div className="space-y-4">
@@ -497,14 +647,17 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
               </span>
             </div>
 
-            <div className="eq-scroll overflow-x-auto px-3 pb-4 pt-5 sm:px-5">
-              <div className="mx-auto flex w-max min-w-full items-start justify-around gap-1 px-1 pb-1">
+            <div className="eq-bands-wrap px-2 pb-4 pt-5 sm:px-4">
+              <div className="grid w-full grid-cols-10 items-start pb-1">
                 {FREQUENCY_BANDS.map((frequency, index) => (
                   <EqualizerBand
                     key={frequency}
                     frequency={frequency}
                     value={eqValues[index]}
                     color={BAND_COLORS[index]}
+                    visualizationRef={(node) => {
+                      energyNodes.current[index] = node;
+                    }}
                     onChange={(value) => handleBandChange(index, value)}
                     isActive={isPlaying && eqValues[index] !== 0}
                   />

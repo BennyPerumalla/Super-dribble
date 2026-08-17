@@ -20,6 +20,7 @@ const requiredFiles = [
   "content.js",
   "offscreen.html",
   "offscreen.js",
+  "utils/audio-visualization.mjs",
   "icons/icon16.png",
   "icons/icon48.png",
   "icons/icon128.png",
@@ -168,15 +169,21 @@ const offscreenSource = fs.readFileSync(
   path.join(extensionRoot, "offscreen.js"),
   "utf8",
 );
-if (
-  /createGain|createBiquadFilter|createScriptProcessor|onaudioprocess/.test(
+const forbiddenJavaScriptDsp =
+  /createBiquadFilter|createScriptProcessor|onaudioprocess/.test(
     offscreenSource,
-  )
-) {
+  );
+const gainNodeCount = offscreenSource.match(/createGain/g)?.length ?? 0;
+const hasMutedAnalyserSink =
+  /analyserSink\.gain\.value\s*=\s*0/.test(offscreenSource);
+
+if (forbiddenJavaScriptDsp || gainNodeCount !== 1 || !hasMutedAnalyserSink) {
   console.log("offscreen.js contains JavaScript/Web Audio DSP nodes");
   allFilesPresent = false;
 } else if (/AudioWorkletNode/.test(offscreenSource)) {
-  console.log("offscreen.js routes audio through WASM AudioWorklet nodes");
+  console.log(
+    "offscreen.js routes audio through WASM AudioWorklet nodes with a muted analyser side tap",
+  );
 } else {
   console.log("offscreen.js does not create a WASM AudioWorklet pipeline");
   allFilesPresent = false;

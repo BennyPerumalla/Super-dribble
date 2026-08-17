@@ -15,6 +15,7 @@ const runtimeFiles = [
   'content.js',
   'offscreen.html',
   'offscreen.js',
+  'utils/audio-visualization.mjs',
   'icons/icon16.png',
   'icons/icon48.png',
   'icons/icon128.png',

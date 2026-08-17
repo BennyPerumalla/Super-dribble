@@ -91,7 +91,8 @@ test('offscreen Web Audio graph contains routing nodes but no JavaScript DSP nod
 
   assert.match(source, /createMediaStreamSource/);
   assert.match(source, /new AudioWorkletNode/);
-  assert.doesNotMatch(source, /createGain|createBiquadFilter|createScriptProcessor|onaudioprocess/);
+  assert.doesNotMatch(source, /createBiquadFilter|createScriptProcessor|onaudioprocess/);
+  assert.match(source, /analyserSink\.gain\.value\s*=\s*0/);
 });
 
 test('WASM modules are compiled before entering the audio worklet', () => {

@@ -4,21 +4,30 @@ const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-function loadBackground({ offscreenStatus = null } = {}) {
+function loadBackground({ offscreenExists = true, offscreenStatus = null } = {}) {
   const listeners = [];
   const sentMessages = [];
   const contextQueries = [];
   const captureRequests = [];
+  const connectListeners = [];
+  const portMessages = [];
+  let hasOffscreenDocument = offscreenExists;
+  let offscreenCreateCount = 0;
   const chrome = {
     runtime: {
       getURL: (resourcePath) => `chrome-extension://test/${resourcePath}`,
       getContexts: async (query) => {
         contextQueries.push(query);
-        return [{ contextType: 'OFFSCREEN_DOCUMENT' }];
+        return hasOffscreenDocument ? [{ contextType: 'OFFSCREEN_DOCUMENT' }] : [];
       },
       onMessage: {
         addListener(listener) {
           listeners.push(listener);
+        },
+      },
+      onConnect: {
+        addListener(listener) {
+          connectListeners.push(listener);
         },
       },
       async sendMessage(message) {
@@ -30,7 +39,10 @@ function loadBackground({ offscreenStatus = null } = {}) {
       },
     },
     offscreen: {
-      createDocument: async () => {},
+      createDocument: async () => {
+        offscreenCreateCount += 1;
+        hasOffscreenDocument = true;
+      },
       closeDocument: async () => {},
     },
     tabCapture: {
@@ -52,7 +64,15 @@ function loadBackground({ offscreenStatus = null } = {}) {
   });
 
   assert.equal(listeners.length, 1);
-  return { captureRequests, contextQueries, listener: listeners[0], sentMessages };
+  return {
+    captureRequests,
+    connectListeners,
+    contextQueries,
+    listener: listeners[0],
+    getOffscreenCreateCount: () => offscreenCreateCount,
+    portMessages,
+    sentMessages,
+  };
 }
 
 function dispatch(listener, request) {
@@ -178,4 +198,41 @@ test('spatializer state is forwarded lazily and restored on the next capture', a
     .at(-1);
   assert.equal(restoredStart?.spatializerEnabled, true);
   assert.deepEqual(JSON.parse(JSON.stringify(restoredStart.spatializerParams)), params);
+});
+
+test('visualization sampling follows the popup port lifecycle', async () => {
+  const {
+    connectListeners,
+    contextQueries,
+    getOffscreenCreateCount,
+    listener,
+    sentMessages,
+  } = loadBackground({ offscreenExists: false });
+  const disconnectListeners = [];
+
+  connectListeners[0]({
+    name: 'super-dribble-visualization',
+    onDisconnect: {
+      addListener(callback) {
+        disconnectListeners.push(callback);
+      },
+    },
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(contextQueries[0].documentUrls[0], 'chrome-extension://test/offscreen.html');
+  assert.equal(sentMessages.length, 0);
+  assert.equal(getOffscreenCreateCount(), 0);
+
+  await dispatch(listener, { action: 'start_capture', tabId: 31 });
+  const startMessage = sentMessages.find((message) => message.action === 'start_capture');
+  assert.equal(startMessage.visualizationEnabled, true);
+  assert.equal(getOffscreenCreateCount(), 1);
+
+  disconnectListeners[0]();
+  await new Promise((resolve) => setImmediate(resolve));
+  const disableMessage = sentMessages.find(
+    (message) => message.action === 'set_visualization_enabled' && message.enabled === false,
+  );
+  assert.equal(disableMessage?.target, 'offscreen');
 });

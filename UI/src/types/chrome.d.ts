@@ -7,25 +7,54 @@ declare namespace chrome {
       title?: string;
     }
 
-    function query(queryInfo: { active?: boolean; currentWindow?: boolean }): Promise<Tab[]>;
+    function query(queryInfo: {
+      active?: boolean;
+      currentWindow?: boolean;
+    }): Promise<Tab[]>;
     // Support both Promise (MV3 polyfills) and callback styles
     function sendMessage(tabId: number, message: any): Promise<any>;
-    function sendMessage(tabId: number, message: any, responseCallback: (response: any) => void): void;
+    function sendMessage(
+      tabId: number,
+      message: any,
+      responseCallback: (response: any) => void,
+    ): void;
   }
 
   namespace runtime {
+    interface Port {
+      name: string;
+      disconnect(): void;
+      postMessage(message: any): void;
+      onMessage: {
+        addListener(callback: (message: any) => void): void;
+        removeListener(callback: (message: any) => void): void;
+      };
+      onDisconnect: { addListener(callback: () => void): void };
+    }
+
     function sendMessage(message: any): Promise<any>;
+    function connect(connectInfo?: { name?: string }): Port;
     const onMessage: {
       addListener(
-        callback: (request: any, sender: { tab?: chrome.tabs.Tab } | any, sendResponse: (response?: any) => void) => void,
+        callback: (
+          request: any,
+          sender: { tab?: chrome.tabs.Tab } | any,
+          sendResponse: (response?: any) => void,
+        ) => void,
       ): void;
       removeListener(
-        callback: (request: any, sender: { tab?: chrome.tabs.Tab } | any, sendResponse: (response?: any) => void) => void,
+        callback: (
+          request: any,
+          sender: { tab?: chrome.tabs.Tab } | any,
+          sendResponse: (response?: any) => void,
+        ) => void,
       ): void;
     };
-    const lastError: {
-      message: string;
-    } | undefined;
+    const lastError:
+      | {
+          message: string;
+        }
+      | undefined;
   }
 
   namespace tabCapture {

@@ -189,22 +189,22 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .eq-scroll {
-    scrollbar-color: rgba(130, 140, 162, 0.28) transparent;
-    scrollbar-width: thin;
+  .eq-band {
+    width: 100%;
   }
 
-  .eq-scroll::-webkit-scrollbar {
-    height: 7px;
+  .eq-band-track {
+    width: clamp(24px, 5vw, 40px);
   }
 
-  .eq-scroll::-webkit-scrollbar-track {
-    background: transparent;
+  .eq-step-control {
+    width: 30px;
+    height: 30px;
   }
 
-  .eq-scroll::-webkit-scrollbar-thumb {
-    border-radius: 999px;
-    background: rgba(130, 140, 162, 0.25);
+  .eq-gain-thumb {
+    width: clamp(22px, 4.5vw, 34px);
+    height: 20px;
   }
 
   .volume-range,
@@ -256,14 +256,83 @@
   }
 
   .band-range::-webkit-slider-thumb {
-    width: 38px;
-    height: 28px;
+    width: 34px;
+    height: 24px;
   }
 
   .band-range::-moz-range-thumb {
-    width: 38px;
-    height: 28px;
+    width: 34px;
+    height: 24px;
     border: 0;
+  }
+
+  .eq-energy-layer {
+    --energy-height: 0%;
+    --energy-opacity: 0.18;
+    --energy-shadow: 2px;
+    --peak-position: 0%;
+    --peak-opacity: 0;
+    opacity: 1;
+    filter: saturate(1);
+    transition:
+      opacity 180ms ease,
+      filter 180ms ease;
+  }
+
+  .eq-energy-fill {
+    height: var(--energy-height);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--band-color) 78%, white) 0%,
+      var(--band-color) 100%
+    );
+    box-shadow: 0 0 var(--energy-shadow)
+      color-mix(in srgb, var(--band-color) 22%, transparent);
+    opacity: var(--energy-opacity);
+  }
+
+  .eq-energy-layer[data-state="peak"] .eq-energy-fill {
+    opacity: 0.88;
+  }
+
+  .eq-energy-peak {
+    bottom: var(--peak-position);
+    background: color-mix(in srgb, var(--band-color) 72%, white);
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--band-color) 22%, transparent);
+    opacity: var(--peak-opacity);
+  }
+}
+
+@media (max-width: 480px) {
+  .eq-bands-wrap {
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .eq-frequency-label,
+  .eq-gain-output {
+    font-size: 9px;
+    line-height: 1.15;
+  }
+
+  .eq-step-control {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+  }
+
+  .eq-step-control svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .eq-db-unit {
+    display: block;
+    margin-top: 2px;
+  }
+
+  .eq-energy-layer {
+    width: 10px;
   }
 }
 
@@ -288,5 +357,9 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .eq-energy-layer {
+    filter: saturate(0.9);
   }
 }

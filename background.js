@@ -58,6 +58,37 @@ let currentVolume = 100; // Default to 100 (1.0 gain)
 let currentEqValues = normalizeEqValues(); // Default flat
 let currentPreset = 'Flat';
 let currentSpatializerParams = null;
+const visualizationPorts = new Set();
+
+async function setExistingOffscreenVisualizationEnabled(enabled) {
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ['OFFSCREEN_DOCUMENT'],
+    documentUrls: [chrome.runtime.getURL('offscreen.html')],
+  });
+  if (contexts.length === 0) return;
+
+  await chrome.runtime.sendMessage({
+    action: 'set_visualization_enabled',
+    target: 'offscreen',
+    enabled,
+  });
+}
+
+chrome.runtime.onConnect?.addListener((port) => {
+  if (port.name !== 'super-dribble-visualization') return;
+
+  visualizationPorts.add(port);
+  // Never create the audio engine while the popup is painting. If a capture
+  // already exists, only enable its analyser side tap.
+  setExistingOffscreenVisualizationEnabled(true).catch(() => {});
+
+  port.onDisconnect.addListener(() => {
+    visualizationPorts.delete(port);
+    if (visualizationPorts.size === 0) {
+      setExistingOffscreenVisualizationEnabled(false).catch(() => {});
+    }
+  });
+});
 
 function clearCaptureState() {
   activeStreamId = null;
@@ -100,7 +131,7 @@ async function getOffscreenStatus() {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Messages forwarded to the offscreen engine must not be processed again
   // by the service worker.
-  if (request.target === 'offscreen') {
+  if (request.target === 'offscreen' || request.target === 'ui') {
     return false;
   }
 
@@ -127,6 +158,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           preset: currentPreset,
           spatializerEnabled: !!currentSpatializerParams,
           spatializerParams: currentSpatializerParams,
+          visualizationEnabled: visualizationPorts.size > 0,
         });
 
         if (!startResponse?.success) {

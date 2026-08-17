@@ -1,3 +1,9 @@
+import {
+  calculateBandEnergies,
+  createBandBinRanges,
+  smoothBandEnergies,
+} from './utils/audio-visualization.mjs';
+
 console.log('Super Dribble WASM Audio Engine loaded');
 
 function normalizeEqValues(values) {
@@ -10,6 +16,14 @@ let audioContext = null;
 let sourceNode = null;
 let equalizerNode = null;
 let spatializerNode = null;
+let analyserNode = null;
+let analyserSinkNode = null;
+let analyserTimer = null;
+let analyserData = null;
+let analyserBandRanges = null;
+let analyserRawEnergy = null;
+let analyserSmoothedEnergy = null;
+let visualizationEnabled = false;
 let spatializerCreating = null;
 let activeStream = null;
 let isProcessing = false;
@@ -20,6 +34,17 @@ let currentPreset = 'Flat';
 let currentSpatializerParams = null;
 let pipelineGeneration = 0;
 let spatializerGeneration = 0;
+let pipelineStartedAt = 0;
+let visualizationFrameCount = 0;
+let visualizationFpsWindowStartedAt = 0;
+let performanceMetrics = null;
+
+const visualizationFrameMessage = {
+  action: 'visualization_update',
+  energy: new Array(10).fill(0),
+  sampledAt: 0,
+};
+const visualizationChannel = new BroadcastChannel('super-dribble-visualization');
 
 const wasmModuleCache = new Map();
 
@@ -27,6 +52,11 @@ const EQUALIZER_WORKLET_PATH = 'wasm/equalizer/equalizer-worklet.js';
 const EQUALIZER_WASM_PATH = 'wasm/equalizer/equalizer.wasm';
 const SPATIALIZER_WORKLET_PATH = 'wasm/spatializer/spatializer-worklet.js';
 const SPATIALIZER_WASM_PATH = 'wasm/spatializer/spatializer.wasm';
+const VISUALIZATION_FFT_SIZE = 2048;
+const VISUALIZATION_FRAME_INTERVAL_MS = 16;
+const VISUALIZATION_FALLBACK_INTERVAL_MS = 32;
+
+performanceMetrics = createPerformanceMetrics();
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.target !== 'offscreen') return false;
@@ -85,7 +115,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             eqValues: [...currentEqValues],
             preset: currentPreset,
             spatializerParams: currentSpatializerParams,
+            performance: { ...performanceMetrics },
           });
+          break;
+        case 'get_performance_metrics':
+          sendResponse({ success: true, performance: { ...performanceMetrics } });
+          break;
+        case 'get_visualization':
+          sendResponse({
+            success: true,
+            isProcessing,
+            energy: readVisualizationEnergy(),
+          });
+          break;
+        case 'set_visualization_enabled':
+          visualizationEnabled = request.enabled === true;
+          if (visualizationEnabled && isProcessing) {
+            startVisualizationSampling(pipelineGeneration);
+          } else {
+            stopVisualizationSampling();
+          }
+          sendResponse({ success: true });
           break;
         default:
           sendResponse({ success: false, error: `Unknown offscreen action: ${request.action}` });
@@ -104,6 +154,9 @@ async function startProcessing(request) {
   if (isProcessing || audioContext || activeStream) await stopProcessing();
 
   const generation = ++pipelineGeneration;
+  pipelineStartedAt = performance.now();
+  performanceMetrics = createPerformanceMetrics();
+  const captureStartedAt = performance.now();
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       mandatory: {
@@ -113,6 +166,7 @@ async function startProcessing(request) {
     },
     video: false,
   });
+  performanceMetrics.captureMs = metricTime(captureStartedAt);
 
   if (generation !== pipelineGeneration) {
     stream.getTracks().forEach((track) => track.stop());
@@ -121,12 +175,23 @@ async function startProcessing(request) {
 
   try {
     activeStream = stream;
+    const contextStartedAt = performance.now();
     const context = new AudioContext({ latencyHint: 'interactive' });
     audioContext = context;
+    performanceMetrics.audioContextCreateMs = metricTime(contextStartedAt);
+    performanceMetrics.baseLatencyMs = roundMetric((context.baseLatency || 0) * 1000);
+    performanceMetrics.outputLatencyMs = roundMetric((context.outputLatency || 0) * 1000);
 
+    const wasmStartedAt = performance.now();
+    const workletStartedAt = performance.now();
     const [equalizerModule] = await Promise.all([
-      compileWasmModule(EQUALIZER_WASM_PATH),
-      context.audioWorklet.addModule(chrome.runtime.getURL(EQUALIZER_WORKLET_PATH)),
+      compileWasmModule(EQUALIZER_WASM_PATH).then((module) => {
+        performanceMetrics.wasmModuleReadyMs = metricTime(wasmStartedAt);
+        return module;
+      }),
+      context.audioWorklet.addModule(chrome.runtime.getURL(EQUALIZER_WORKLET_PATH)).then(() => {
+        performanceMetrics.workletModuleReadyMs = metricTime(workletStartedAt);
+      }),
     ]);
     assertPipelineActive(generation, context);
 
@@ -146,18 +211,44 @@ async function startProcessing(request) {
       },
     });
     equalizerNode = equalizer;
+    const processorStartedAt = performance.now();
     await waitForProcessor(equalizer, 'equalizer');
+    performanceMetrics.wasmProcessorReadyMs = metricTime(processorStartedAt);
     assertPipelineActive(generation, context);
 
-    equalizer.connect(context.destination);
+    const analyserStartedAt = performance.now();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = VISUALIZATION_FFT_SIZE;
+    analyser.minDecibels = -94;
+    analyser.maxDecibels = -8;
+    analyser.smoothingTimeConstant = 0.1;
+    const analyserSink = context.createGain();
+    analyserSink.gain.value = 0;
+    analyser.connect(analyserSink);
+    analyserSink.connect(context.destination);
+    analyserNode = analyser;
+    analyserSinkNode = analyserSink;
+    analyserData = new Uint8Array(analyser.frequencyBinCount);
+    analyserBandRanges = createBandBinRanges(context.sampleRate, analyser.fftSize);
+    analyserRawEnergy = new Float32Array(analyserBandRanges.length);
+    analyserSmoothedEnergy = new Float32Array(analyserBandRanges.length);
+    performanceMetrics.analyserInitMs = metricTime(analyserStartedAt);
+    performanceMetrics.sampleRate = context.sampleRate;
+    performanceMetrics.fftSize = analyser.fftSize;
+
+    const graphStartedAt = performance.now();
+    connectProcessedOutput(equalizer, context);
     if (request.spatializerEnabled && request.spatializerParams) {
+      const spatializerStartedAt = performance.now();
       await ensureSpatializer(request.spatializerParams, generation);
+      performanceMetrics.spatializerReadyMs = metricTime(spatializerStartedAt);
     }
 
     assertPipelineActive(generation, context);
     const source = context.createMediaStreamSource(stream);
     source.connect(equalizer);
     sourceNode = source;
+    performanceMetrics.audioGraphCreateMs = metricTime(graphStartedAt);
 
     stream.addEventListener('inactive', () => {
       if (generation !== pipelineGeneration || activeStream !== stream) return;
@@ -174,7 +265,11 @@ async function startProcessing(request) {
     currentSpatializerParams = request.spatializerEnabled && request.spatializerParams
       ? { ...request.spatializerParams }
       : null;
-    console.log('Audio path: MediaStreamSource -> Equalizer WASM -> optional Spatializer WASM -> Destination');
+    visualizationEnabled = request.visualizationEnabled === true;
+    performanceMetrics.timeToAudioReadyMs = metricTime(pipelineStartedAt);
+    if (visualizationEnabled) startVisualizationSampling(generation);
+    console.log('Audio path: MediaStreamSource -> Equalizer WASM -> optional Spatializer WASM -> Destination + silent Analyser side tap');
+    console.log('Audio startup metrics:', performanceMetrics);
   } catch (error) {
     const isCurrentGeneration = generation === pipelineGeneration;
     await stopProcessing();
@@ -229,7 +324,7 @@ async function ensureSpatializer(params, expectedGeneration = pipelineGeneration
 
       equalizer.disconnect();
       equalizer.connect(node);
-      node.connect(context.destination);
+      connectProcessedOutput(node, context);
       spatializerNode = node;
       return node;
     } catch (error) {
@@ -256,9 +351,96 @@ function disableSpatializer() {
   if (!node || !equalizerNode || !audioContext) return;
 
   equalizerNode.disconnect();
-  equalizerNode.connect(audioContext.destination);
+  connectProcessedOutput(equalizerNode, audioContext);
   node.port.postMessage({ type: 'dispose' });
   node.disconnect();
+}
+
+function startVisualizationSampling(generation) {
+  stopVisualizationSampling();
+  visualizationFrameCount = 0;
+  visualizationFpsWindowStartedAt = performance.now();
+
+  const sample = () => {
+    if (generation !== pipelineGeneration || !isProcessing || !analyserNode) return;
+    const sampleStartedAt = performance.now();
+    analyserNode.getByteFrequencyData(analyserData);
+    calculateBandEnergies(analyserData, analyserBandRanges, analyserRawEnergy);
+    smoothBandEnergies(analyserRawEnergy, analyserSmoothedEnergy, 0.9, 0.22);
+    for (let index = 0; index < analyserSmoothedEnergy.length; index += 1) {
+      visualizationFrameMessage.energy[index] = analyserSmoothedEnergy[index];
+    }
+    visualizationFrameMessage.sampledAt = performance.timeOrigin + performance.now();
+    visualizationChannel.postMessage(visualizationFrameMessage);
+
+    const now = performance.now();
+    if (performanceMetrics.visualizationFirstFrameMs === null) {
+      performanceMetrics.visualizationFirstFrameMs = metricTime(pipelineStartedAt, now);
+    }
+    visualizationFrameCount += 1;
+    const fpsWindowMs = now - visualizationFpsWindowStartedAt;
+    if (fpsWindowMs >= 1000) {
+      performanceMetrics.visualizationFps = roundMetric(
+        (visualizationFrameCount * 1000) / fpsWindowMs,
+      );
+      visualizationFrameCount = 0;
+      visualizationFpsWindowStartedAt = now;
+    }
+
+    const sampleCostMs = now - sampleStartedAt;
+    performanceMetrics.visualizationSampleMs = roundMetric(sampleCostMs);
+    const targetInterval = sampleCostMs > 8
+      ? VISUALIZATION_FALLBACK_INTERVAL_MS
+      : VISUALIZATION_FRAME_INTERVAL_MS;
+    analyserTimer = setTimeout(sample, Math.max(0, targetInterval - sampleCostMs));
+  };
+  sample();
+}
+
+function stopVisualizationSampling() {
+  if (analyserTimer !== null) {
+    clearTimeout(analyserTimer);
+    analyserTimer = null;
+  }
+}
+
+function connectProcessedOutput(node, context) {
+  node.connect(context.destination);
+  if (analyserNode) node.connect(analyserNode);
+}
+
+function createPerformanceMetrics() {
+  return {
+    captureMs: null,
+    audioContextCreateMs: null,
+    wasmModuleReadyMs: null,
+    workletModuleReadyMs: null,
+    wasmProcessorReadyMs: null,
+    spatializerReadyMs: null,
+    analyserInitMs: null,
+    audioGraphCreateMs: null,
+    timeToAudioReadyMs: null,
+    visualizationFirstFrameMs: null,
+    visualizationSampleMs: null,
+    visualizationFps: 0,
+    baseLatencyMs: null,
+    outputLatencyMs: null,
+    sampleRate: null,
+    fftSize: VISUALIZATION_FFT_SIZE,
+  };
+}
+
+function metricTime(startedAt, endedAt = performance.now()) {
+  return roundMetric(endedAt - startedAt);
+}
+
+function roundMetric(value) {
+  return Math.round(value * 100) / 100;
+}
+
+function readVisualizationEnergy() {
+  if (!analyserSmoothedEnergy) return new Array(10).fill(0);
+  return Array.from(analyserSmoothedEnergy);
 }
 
 async function compileWasmModule(resourcePath) {
@@ -323,6 +505,7 @@ function requireEqualizer() {
 async function stopProcessing() {
   pipelineGeneration += 1;
   spatializerGeneration += 1;
+  stopVisualizationSampling();
   isProcessing = false;
   activeTabId = null;
   spatializerCreating = null;
@@ -330,12 +513,20 @@ async function stopProcessing() {
   const source = sourceNode;
   const equalizer = equalizerNode;
   const spatializer = spatializerNode;
+  const analyser = analyserNode;
+  const analyserSink = analyserSinkNode;
   const stream = activeStream;
   const context = audioContext;
 
   sourceNode = null;
   equalizerNode = null;
   spatializerNode = null;
+  analyserNode = null;
+  analyserSinkNode = null;
+  analyserData = null;
+  analyserBandRanges = null;
+  analyserRawEnergy = null;
+  analyserSmoothedEnergy = null;
   activeStream = null;
   audioContext = null;
 
@@ -344,6 +535,8 @@ async function stopProcessing() {
   equalizer?.disconnect();
   spatializer?.port.postMessage({ type: 'dispose' });
   spatializer?.disconnect();
+  analyser?.disconnect();
+  analyserSink?.disconnect();
 
   stream?.getTracks().forEach((track) => track.stop());
   if (context && context.state !== 'closed') await context.close();
