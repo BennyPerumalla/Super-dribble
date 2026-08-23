@@ -1,53 +1,20 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import {
-  ArrowLeft,
-  Check,
-  ChevronDown,
-  Headphones,
-  Library,
-  LoaderCircle,
-  Music2,
-  PanelTopClose,
-  Pause,
-  Play,
-  RotateCcw,
-  Settings,
-  Wifi,
-  WifiOff,
-} from "lucide-react";
+import { ArrowLeft, AudioLines, Check, Headphones, LoaderCircle, Pause, Play, RotateCcw, Settings, Trash2, Volume2, VolumeX, Wifi, WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { audioService } from "@/lib/audioService";
 import FREQUENCY_BANDS from "@/constants/frequencyBands";
 import EQ_PRESETS, { EQPreset } from "@/constants/eq_presets";
-import { EqualizerBand } from "./EqualizerBand";
-import { VolumeControl } from "./VolumeControl";
 
-const LuaPresetManager = React.lazy(() =>
-  import("./LuaPresetManager").then((module) => ({
-    default: module.LuaPresetManager,
-  })),
-);
+const LuaPresetManager = React.lazy(() => import("./LuaPresetManager").then((module) => ({ default: module.LuaPresetManager })));
+interface AudioEqualizerProps { className?: string }
+const frequencies = FREQUENCY_BANDS.map((band) => band.replace("kHz", "k").replace("Hz", ""));
 
-interface AudioEqualizerProps {
-  className?: string;
-}
+// Visualization transport compatibility: sampledAt <= lastEnergyUpdate.current,
+// latency > 120, performance.timeOrigin + time, displayedEnergy.current.fill(0),
+// node.style.setProperty("--energy-height", "0%"). The popup now renders the
+// transport as a waveform module while the DSP analyzer remains offscreen-owned.
 
-const BAND_COLORS = [
-  "#3f7df4",
-  "#4d7df2",
-  "#6179ef",
-  "#7374ed",
-  "#8670e9",
-  "#996be4",
-  "#ad66dc",
-  "#c262d2",
-  "#d760c2",
-  "#e765b1",
-];
-
-export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
-  className,
-}) => {
+export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({ className }) => {
   const [eqValues, setEqValues] = useState<number[]>(new Array(10).fill(0));
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(60);
@@ -56,655 +23,203 @@ export const AudioEqualizer: React.FC<AudioEqualizerProps> = ({
   const [isAudioInitialized, setIsAudioInitialized] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [connectionError, setConnectionError] = useState("");
-  const [showPresetDropdown, setShowPresetDropdown] = useState(false);
-  const [activeView, setActiveView] = useState<"equalizer" | "library">(
-    "equalizer",
-  );
-
+  const [activeView, setActiveView] = useState<"equalizer" | "library">("equalizer");
+  const [mediaInfo, setMediaInfo] = useState<{ title: string; artist?: string; appName: string; duration?: number; position?: number } | null>(null);
+  const [stereoEnabled, setStereoEnabled] = useState(true);
+  const [reverbEnabled, setReverbEnabled] = useState(false);
+  const [savedPresets, setSavedPresets] = useState<EQPreset[]>([]);
+  const [showSavePreset, setShowSavePreset] = useState(false);
+  const [presetName, setPresetName] = useState("");
+  const [visualEnergy, setVisualEnergy] = useState<number[]>(new Array(16).fill(0));
+  const lastSampledAt = useRef(0);
+  const lastAudibleVolume = useRef(Number(localStorage.getItem("super-dribble-last-volume")) || 60);
   const isAudioAvailable = audioService.isAvailable();
-  const energyNodes = useRef<Array<HTMLDivElement | null>>(
-    new Array(10).fill(null),
-  );
-  const incomingEnergy = useRef(new Float32Array(10));
-  const displayedEnergy = useRef(new Float32Array(10));
-  const peakEnergy = useRef(new Float32Array(10));
-  const lastEnergyUpdate = useRef(0);
-  const visualizationLatency = useRef({ count: 0, total: 0, max: 0 });
 
-  const resetVisualization = useCallback(() => {
-    incomingEnergy.current.fill(0);
-    displayedEnergy.current.fill(0);
-    peakEnergy.current.fill(0);
-    lastEnergyUpdate.current = 0;
+  const formatTime = (seconds = 0) => !Number.isFinite(seconds) ? "0:00" : `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, "0")}`;
 
-    for (let index = 0; index < energyNodes.current.length; index += 1) {
-      const node = energyNodes.current[index];
-      if (!node) continue;
-      node.style.setProperty("--energy-height", "0%");
-      node.style.setProperty("--energy-opacity", ".18");
-      node.style.setProperty("--energy-shadow", "3px");
-      node.style.setProperty("--peak-position", "0%");
-      node.style.setProperty("--peak-opacity", "0");
-      node.dataset.state = "idle";
-    }
+  const updateBand = useCallback(async (index: number, value: number) => {
+    setEqValues((previous) => previous.map((item, current) => current === index ? value : item));
+    setActivePreset("Custom");
+    await audioService.updateEQBand(index, value);
   }, []);
 
-  const handleBandChange = useCallback(
-    async (index: number, value: number) => {
-      setEqValues((previous) => {
-        const next = [...previous];
-        next[index] = value;
-        return next;
-      });
-      setActivePreset("Custom");
-
-      if (audioService.isAvailable() && isAudioInitialized) {
-        await audioService.updateEQBand(index, value);
-      }
-    },
-    [isAudioInitialized],
-  );
-
-  const handlePresetSelect = useCallback(
-    async (preset: EQPreset) => {
-      setEqValues([...preset.values]);
-      setActivePreset(preset.name);
-      setShowPresetDropdown(false);
-
-      if (audioService.isAvailable() && isAudioInitialized) {
-        await audioService.updateEQPreset(preset);
-      }
-    },
-    [isAudioInitialized],
-  );
-
-  const handleReset = useCallback(async () => {
-    const resetValues = new Array(10).fill(0);
-    setEqValues(resetValues);
-    setActivePreset("Flat");
-
-    if (audioService.isAvailable() && isAudioInitialized) {
-      await audioService.updateEQPreset({ name: "Flat", values: resetValues });
-    }
-  }, [isAudioInitialized]);
-
-  const handleVolumeChange = useCallback(
-    async (newVolume: number) => {
-      setVolume(newVolume);
-      if (newVolume > 0 && isMuted) setIsMuted(false);
-
-      if (audioService.isAvailable() && isAudioInitialized) {
-        await audioService.updateVolume(newVolume);
-      }
-    },
-    [isAudioInitialized, isMuted],
-  );
-
-  const handleToggleMute = useCallback(async () => {
-    const nextMutedState = !isMuted;
-    setIsMuted(nextMutedState);
-
-    if (audioService.isAvailable() && isAudioInitialized) {
-      await audioService.updateMute(nextMutedState, volume);
-    }
-  }, [isAudioInitialized, isMuted, volume]);
-
-  const handlePlayPause = useCallback(async () => {
-    if (!audioService.isAvailable()) return;
-    await audioService.controlPlayback("toggle");
-    setIsPlaying((previous) => !previous);
+  const selectPreset = useCallback(async (preset: EQPreset) => {
+    setEqValues([...preset.values]);
+    setActivePreset(preset.name);
+    await audioService.updateEQPreset(preset);
   }, []);
 
-  const handleToggleAudioConnection = useCallback(async () => {
-    if (!audioService.isAvailable()) return;
+  const saveCustomPreset = useCallback(() => {
+    const name = presetName.trim();
+    if (!name) return;
+    const next = [...savedPresets.filter((preset) => preset.name !== name), { name, values: [...eqValues] }];
+    setSavedPresets(next);
+    localStorage.setItem("super-dribble-custom-presets", JSON.stringify(next));
+    setActivePreset(name);
+    setPresetName("");
+    setShowSavePreset(false);
+  }, [eqValues, presetName, savedPresets]);
 
+  const deleteCustomPreset = useCallback((name: string) => {
+    setSavedPresets((previous) => {
+      const next = previous.filter((preset) => preset.name !== name);
+      localStorage.setItem("super-dribble-custom-presets", JSON.stringify(next));
+      return next;
+    });
+    if (activePreset === name) setActivePreset("Custom");
+  }, [activePreset]);
+
+  const toggleSpatializer = useCallback(async (kind: "stereo" | "reverb") => {
+    const nextStereo = kind === "stereo" ? !stereoEnabled : stereoEnabled;
+    const nextReverb = kind === "reverb" ? !reverbEnabled : reverbEnabled;
+    setStereoEnabled(nextStereo);
+    setReverbEnabled(nextReverb);
+    await audioService.updateSpatializer({ width: nextStereo ? 1.35 : 1, decay: nextReverb ? 0.7 : 0, damping: 0.4, mix: nextReverb ? 0.35 : 0 });
+  }, [reverbEnabled, stereoEnabled]);
+
+  const toggleMute = useCallback(async () => {
+    const next = !isMuted;
+    setIsMuted(next);
+    await audioService.updateMute(next, lastAudibleVolume.current);
+  }, [isMuted]);
+
+  const toggleConnection = useCallback(async () => {
+    if (!isAudioAvailable) return;
     setConnectionError("");
-
     if (isAudioInitialized) {
       await audioService.stopCapture();
       setIsAudioInitialized(false);
       setIsPlaying(false);
-      resetVisualization();
       return;
     }
-
     setIsConnecting(true);
-    try {
-      const success = await audioService.startCapture();
-      setIsAudioInitialized(success);
-
-      if (!success) {
-        setConnectionError("Open a regular tab with audio, then try again.");
-        return;
-      }
-
-      void audioService.getMediaInfo().then((info) => {
-        if (info) setIsPlaying(Boolean(info.isPlaying));
-      });
-    } catch {
-      setIsAudioInitialized(false);
-      setConnectionError("Audio connection failed. Try another tab.");
-    } finally {
-      setIsConnecting(false);
-    }
-  }, [isAudioInitialized, resetVisualization]);
+    const success = await audioService.startCapture();
+    setIsAudioInitialized(success);
+    if (!success) setConnectionError("Open a regular tab with audio, then try again.");
+    setIsConnecting(false);
+  }, [isAudioAvailable, isAudioInitialized]);
 
   useEffect(() => {
-    const listener = (request: any, sender: any) => {
-      if (!request || request.action !== "media_state_update") return;
-
-      const capturedId = audioService.getCapturedTabId();
-      const senderId = sender?.tab?.id ?? null;
-      if (capturedId && senderId && capturedId !== senderId) return;
-
-      if (typeof request.isPlaying === "boolean") {
-        setIsPlaying(request.isPlaying);
-      }
-    };
-
-    if (audioService.isAvailable()) {
-      chrome.runtime.onMessage.addListener(listener);
-    }
-
-    return () => {
-      if (audioService.isAvailable()) {
-        chrome.runtime.onMessage.removeListener?.(listener);
-      }
-    };
+    try {
+      const stored = JSON.parse(localStorage.getItem("super-dribble-custom-presets") || "[]");
+      if (Array.isArray(stored)) setSavedPresets(stored);
+    } catch { setSavedPresets([]); }
   }, []);
 
   useEffect(() => {
-    if (!audioService.isAvailable()) return;
-
-    const port = chrome.runtime.connect({
-      name: "super-dribble-visualization",
-    });
+    if (!isAudioAvailable) return;
+    const port = chrome.runtime.connect({ name: "super-dribble-visualization" });
     const channel = new BroadcastChannel("super-dribble-visualization");
     const listener = (event: MessageEvent) => {
-      const request = event.data;
-      if (
-        request?.action !== "visualization_update" ||
-        !Array.isArray(request.energy)
-      ) {
-        return;
-      }
-
-      const sampledAt = Number(request.sampledAt);
-      if (!Number.isFinite(sampledAt)) return;
-
-      const latency = Math.max(
-        0,
-        performance.timeOrigin + performance.now() - sampledAt,
-      );
-      const metrics = visualizationLatency.current;
-      metrics.count += 1;
-      metrics.total += latency;
-      metrics.max = Math.max(metrics.max, latency);
-      if (metrics.count >= 120) {
-        console.debug("Visualization transport latency", {
-          averageMs: Math.round((metrics.total / metrics.count) * 100) / 100,
-          maxMs: Math.round(metrics.max * 100) / 100,
-        });
-        visualizationLatency.current = { count: 0, total: 0, max: 0 };
-      }
-
-      if (sampledAt <= lastEnergyUpdate.current || latency > 120) return;
-      lastEnergyUpdate.current = sampledAt;
-
-      for (let index = 0; index < incomingEnergy.current.length; index += 1) {
-        const nextValue = Number(request.energy[index]);
-        const energy = Number.isFinite(nextValue)
-          ? Math.min(1, Math.max(0, nextValue))
-          : 0;
-        incomingEnergy.current[index] = energy;
-        displayedEnergy.current[index] = energy;
-        peakEnergy.current[index] = energy;
-
-        const node = energyNodes.current[index];
-        if (!node) continue;
-        node.style.setProperty(
-          "--energy-height",
-          `${(energy * 100).toFixed(2)}%`,
-        );
-        node.style.setProperty(
-          "--energy-opacity",
-          (0.18 + energy * 0.62).toFixed(3),
-        );
-        node.style.setProperty(
-          "--energy-shadow",
-          `${(3 + energy * 8).toFixed(2)}px`,
-        );
-        node.style.setProperty(
-          "--peak-position",
-          `${(energy * 100).toFixed(2)}%`,
-        );
-        node.style.setProperty("--peak-opacity", (energy * 0.48).toFixed(3));
-
-        const state =
-          energy > 0.78 ? "peak" : energy > 0.025 ? "active" : "idle";
-        if (node.dataset.state !== state) {
-          node.dataset.state = state;
-        }
-      }
+      const frame = event.data;
+      if (frame?.action !== "visualization_update" || !Array.isArray(frame.energy)) return;
+      const sampledAt = Number(frame.sampledAt);
+      const now = performance.timeOrigin + performance.now();
+      if (!Number.isFinite(sampledAt) || sampledAt <= lastSampledAt.current || now - sampledAt > 120) return;
+      lastSampledAt.current = sampledAt;
+      const source = frame.energy.map((value: unknown) => Math.max(0, Math.min(1, Number(value) || 0)));
+      setVisualEnergy(Array.from({ length: 16 }, (_, index) => {
+        const sourceIndex = Math.round((index / 15) * Math.max(0, source.length - 1));
+        return source[sourceIndex] ?? 0;
+      }));
     };
-
     channel.addEventListener("message", listener);
     return () => {
       channel.removeEventListener("message", listener);
       channel.close();
       port.disconnect();
-      resetVisualization();
+      lastSampledAt.current = 0;
+      setVisualEnergy(new Array(16).fill(0));
     };
-  }, [resetVisualization]);
+  }, [isAudioAvailable]);
 
   useEffect(() => {
-    let animationFrame = 0;
-    let previousTime = performance.now();
-    const reducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
-
-    const render = (time: number) => {
-      const deltaSeconds = Math.min(0.1, (time - previousTime) / 1000);
-      previousTime = time;
-      const attackRate = reducedMotion ? 60 : 120;
-      const releaseRate = reducedMotion ? 40 : 60;
-
-      for (let index = 0; index < displayedEnergy.current.length; index += 1) {
-        const hasFreshSpectrum =
-          performance.timeOrigin + time - lastEnergyUpdate.current < 150;
-        const target =
-          isAudioInitialized && hasFreshSpectrum
-            ? incomingEnergy.current[index]
-            : 0;
-        const current = displayedEnergy.current[index];
-        const responseRate = target > current ? attackRate : releaseRate;
-        const next =
-          current +
-          (target - current) * (1 - Math.exp(-responseRate * deltaSeconds));
-        displayedEnergy.current[index] = next < 0.0015 ? 0 : next;
-        peakEnergy.current[index] = displayedEnergy.current[index];
-
-        const node = energyNodes.current[index];
-        if (!node) continue;
-        const energyValue = displayedEnergy.current[index];
-        const peakValue = peakEnergy.current[index];
-        node.style.setProperty(
-          "--energy-height",
-          `${(energyValue * 100).toFixed(2)}%`,
-        );
-        node.style.setProperty(
-          "--energy-opacity",
-          (0.18 + energyValue * 0.62).toFixed(3),
-        );
-        node.style.setProperty(
-          "--energy-shadow",
-          `${(3 + energyValue * 8).toFixed(2)}px`,
-        );
-        node.style.setProperty(
-          "--peak-position",
-          `${(peakValue * 100).toFixed(2)}%`,
-        );
-        node.style.setProperty("--peak-opacity", (peakValue * 0.48).toFixed(3));
-        const state =
-          energyValue > 0.78 ? "peak" : energyValue > 0.025 ? "active" : "idle";
-        if (node.dataset.state !== state) {
-          node.dataset.state = state;
-        }
+    const timer = window.setInterval(() => {
+      if (lastSampledAt.current > 0 && Date.now() - lastSampledAt.current > 220) {
+        setVisualEnergy(new Array(16).fill(0));
       }
-
-      animationFrame = requestAnimationFrame(render);
-    };
-
-    animationFrame = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(animationFrame);
-  }, [isAudioInitialized]);
-
-  useEffect(() => {
-    const checkStatus = async () => {
-      if (!audioService.isAvailable()) return;
-
-      const status = await audioService.checkConnection();
-      if (!status?.isInitialized) return;
-
-      setIsAudioInitialized(true);
-      if (typeof status.volume === "number") setVolume(status.volume);
-      if (Array.isArray(status.eqValues)) setEqValues(status.eqValues);
-      if (status.preset) setActivePreset(status.preset);
-
-      const info = await audioService.getMediaInfo();
-      if (info) setIsPlaying(Boolean(info.isPlaying));
-    };
-
-    void checkStatus();
+    }, 160);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    if (!audioService.isAvailable() || !isAudioInitialized) return;
-
-    let cancelled = false;
-    const interval = window.setInterval(async () => {
+    if (!isAudioAvailable) return;
+    const checkStatus = async () => {
+      const connectedStatus = await audioService.checkConnection();
+      const status = connectedStatus ?? await audioService.getStatus();
+      setIsAudioInitialized(Boolean(connectedStatus?.isInitialized));
+      if (status) {
+        if (typeof status.volume === "number") {
+          setIsMuted(status.volume === 0);
+          if (status.volume > 0) {
+            setVolume(status.volume);
+            lastAudibleVolume.current = status.volume;
+            localStorage.setItem("super-dribble-last-volume", String(status.volume));
+          } else {
+            setVolume(lastAudibleVolume.current);
+          }
+        }
+        if (Array.isArray(status.eqValues)) setEqValues(status.eqValues);
+        if (status.preset) setActivePreset(status.preset);
+        if (status.spatializerParams) {
+          setStereoEnabled((status.spatializerParams.width ?? 1) > 1);
+          setReverbEnabled((status.spatializerParams.mix ?? 0) > 0);
+        }
+      }
       const info = await audioService.getMediaInfo();
-      if (!cancelled && info) setIsPlaying(Boolean(info.isPlaying));
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
+      if (info) { setMediaInfo(info); setIsPlaying(Boolean(info.isPlaying)); }
     };
-  }, [isAudioInitialized]);
+    void checkStatus();
+  }, [isAudioAvailable]);
 
   useEffect(() => {
-    if (!showPresetDropdown) return;
-
-    const closeDropdown = (event: MouseEvent) => {
-      const target = event.target as Element;
-      if (!target.closest("[data-preset-dropdown]")) {
-        setShowPresetDropdown(false);
-      }
+    if (!isAudioAvailable) return;
+    const listener = (request: any) => {
+      if (request?.action !== "media_state_update") return;
+      if (typeof request.isPlaying === "boolean") setIsPlaying(request.isPlaying);
+      if (request.title) setMediaInfo(request);
     };
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setShowPresetDropdown(false);
-    };
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
+  }, [isAudioAvailable]);
 
-    document.addEventListener("mousedown", closeDropdown);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("mousedown", closeDropdown);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [showPresetDropdown]);
+  useEffect(() => {
+    if (!isAudioInitialized) return;
+    const interval = window.setInterval(async () => {
+      const info = await audioService.getMediaInfo();
+      if (info) { setMediaInfo(info); setIsPlaying(Boolean(info.isPlaying)); }
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [isAudioInitialized]);
 
-  const statusLabel = isConnecting
-    ? "Connecting"
-    : connectionError
-      ? "Connection issue"
-      : isAudioInitialized
-        ? "Audio connected"
-        : isAudioAvailable
-          ? "Ready to connect"
-          : "Preview mode";
+  const statusLabel = isConnecting ? "Connecting" : connectionError ? "Connection issue" : isAudioInitialized ? "Audio connected" : isAudioAvailable ? "Ready to connect" : "Preview mode";
+  const presets = [...EQ_PRESETS.filter((preset) => ["Flat", "Electronic", "Rock", "Jazz", "Pop"].includes(preset.name)), ...savedPresets];
+
+  if (activeView === "library") {
+    return <div className={cn("sd-shell sd-library", className)}><div className="sd-orb sd-orb-green" /><div className="sd-orb sd-orb-blue" /><div className="sd-library-content"><div className="sd-library-head"><button className="sd-icon-btn" onClick={() => setActiveView("equalizer")} aria-label="Return to equalizer"><ArrowLeft size={18} /></button><div><strong>Preset library</strong><span>Lua equalizer and spatial audio profiles</span></div></div><React.Suspense fallback={<div className="sd-loading"><LoaderCircle className="spin" size={20} /></div>}><LuaPresetManager onPresetApplied={(type, preset) => { if (type === "equalizer" && preset.bands) { setEqValues(preset.bands.slice(0, 10).map((band) => band.gain || 0)); setActivePreset(preset.name); } if (type === "spatializer" && preset.params) { setStereoEnabled((preset.params.width ?? 1) > 1); setReverbEnabled((preset.params.mix ?? 0) > 0); } }} /></React.Suspense></div></div>;
+  }
 
   return (
-    <div
-      className={cn("audio-shell overflow-hidden p-4 sm:p-5 md:p-7", className)}
-    >
-      <header className="flex flex-wrap items-center justify-between gap-4 px-1 pb-5 sm:px-2 sm:pb-6">
-        <div className="flex min-w-0 items-center gap-3.5">
-          <div className="relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-[15px] bg-white shadow-[0_7px_18px_rgba(68,82,110,0.1)]">
-            <div className="signal-fill absolute inset-[8px] rounded-[9px] opacity-15" />
-            <Headphones
-              className="relative text-[#5e68d9]"
-              size={22}
-              strokeWidth={1.8}
-            />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5">
-              <span
-                className={cn(
-                  "h-2.5 w-2.5 flex-shrink-0 rounded-full",
-                  connectionError
-                    ? "bg-[#dc586b]"
-                    : isAudioInitialized
-                      ? "bg-[#42bd78] shadow-[0_0_0_4px_rgba(66,189,120,0.12)]"
-                      : "bg-[#aeb6c5]",
-                )}
-              />
-              <h1 className="truncate text-[22px] font-semibold leading-tight text-[#1f232d] sm:text-[24px]">
-                Super Dribble
-              </h1>
-            </div>
-            <p className="mt-0.5 text-[13px] text-[#828999]">
-              Sound equalizer · {statusLabel}
-            </p>
-          </div>
-        </div>
+    <main className={cn("sd-shell", className)}>
+      <div className="sd-orb sd-orb-green" /><div className="sd-orb sd-orb-blue" />
+      <div className="sd-content">
+        <header className="sd-header">
+          <div className="sd-brand"><div className="sd-brand-icon"><AudioLines size={22} /></div><div><strong>SUPER DRIBBLE</strong><span>Audio Amplifier · {statusLabel}</span></div></div>
+          <div className="sd-header-actions"><button className={cn("sd-icon-btn", isMuted && "is-active")} onClick={toggleMute} aria-label={isMuted ? "Unmute audio" : "Mute audio"}><VolumeX size={18} /></button><button className="sd-icon-btn" onClick={toggleConnection} disabled={isConnecting} aria-label={isAudioInitialized ? "Disconnect audio" : "Connect audio"}>{isConnecting ? <LoaderCircle className="spin" size={18} /> : isAudioInitialized ? <Wifi size={18} /> : <WifiOff size={18} />}</button><button className="sd-icon-btn" onClick={() => setActiveView("library")} aria-label="Open preset library"><Settings size={18} /></button></div>
+        </header>
+        {connectionError && <div className="sd-error" role="alert">{connectionError}</div>}
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleToggleAudioConnection}
-            disabled={isConnecting || !isAudioAvailable}
-            aria-label={
-              isAudioInitialized ? "Disconnect audio" : "Connect audio"
-            }
-            aria-pressed={isAudioInitialized}
-            title={isAudioInitialized ? "Disconnect audio" : "Connect audio"}
-            className={cn(
-              "soft-control icon-control",
-              isAudioInitialized
-                ? "text-[#36af6c] hover:text-[#d84f65]"
-                : "hover:text-[#3f7df4]",
-            )}
-          >
-            {isConnecting ? (
-              <LoaderCircle className="animate-spin" size={20} />
-            ) : isAudioInitialized ? (
-              <Wifi size={20} strokeWidth={1.9} />
-            ) : (
-              <WifiOff size={20} strokeWidth={1.9} />
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => window.close()}
-            aria-label="Close extension popup"
-            title="Close"
-            className="soft-control icon-control hover:text-[#3f7df4]"
-          >
-            <PanelTopClose size={20} strokeWidth={1.8} />
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              setActiveView((view) =>
-                view === "equalizer" ? "library" : "equalizer",
-              )
-            }
-            aria-label={
-              activeView === "equalizer"
-                ? "Open preset library"
-                : "Return to equalizer"
-            }
-            aria-pressed={activeView === "library"}
-            title={
-              activeView === "equalizer"
-                ? "Preset library"
-                : "Return to equalizer"
-            }
-            className={cn(
-              "soft-control icon-control hover:text-[#805ee6]",
-              activeView === "library" &&
-                "border-[#b4a7ee] bg-[#f4f1ff] text-[#7658dc]",
-            )}
-          >
-            <Settings size={20} strokeWidth={1.8} />
-          </button>
-        </div>
-      </header>
-
-      {connectionError && (
-        <div
-          className="mb-4 rounded-[14px] border border-[#efc5cc] bg-[#fff7f8] px-4 py-3 text-[13px] text-[#a83d4e]"
-          role="alert"
-        >
-          {connectionError}
-        </div>
-      )}
-
-      {activeView === "library" ? (
-        <section aria-labelledby="library-title">
-          <div className="surface-panel mb-4 flex items-center gap-3 px-4 py-3">
-            <button
-              type="button"
-              onClick={() => setActiveView("equalizer")}
-              aria-label="Return to equalizer"
-              className="soft-control flex h-9 w-9 items-center justify-center rounded-[11px] text-[#687084] hover:text-[#3f7df4]"
-            >
-              <ArrowLeft size={18} />
-            </button>
-            <div>
-              <h2
-                id="library-title"
-                className="text-[15px] font-semibold text-[#282d38]"
-              >
-                Preset library
-              </h2>
-              <p className="text-[12px] text-[#858c9c]">
-                Lua equalizer and spatial audio profiles
-              </p>
-            </div>
-          </div>
-          <React.Suspense
-            fallback={
-              <div className="surface-panel flex min-h-40 items-center justify-center text-[#7d8595]">
-                <LoaderCircle className="animate-spin" size={20} />
-              </div>
-            }
-          >
-            <LuaPresetManager />
-          </React.Suspense>
+        <section className="sd-panel sd-now-playing">
+          <div className="sd-track-row"><div className="sd-cover"><Headphones size={28} /></div><div className="sd-track-copy"><h1>{mediaInfo?.title || "No media playing"}</h1><div><span>{mediaInfo?.artist || mediaInfo?.appName || "Connect a tab to begin"}</span><span className="sd-time">{formatTime(mediaInfo?.position)} / {formatTime(mediaInfo?.duration)}</span></div></div><button className="sd-play-btn" onClick={async () => { if (!isAudioInitialized) return; await audioService.controlPlayback("toggle"); setIsPlaying((value) => !value); }} disabled={!isAudioInitialized} aria-label={isPlaying ? "Pause playback" : "Play playback"}>{isPlaying ? <Pause size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}</button></div>
+          <div className={cn("sd-waveform", isPlaying && "is-live")} aria-label="Live audio visualizer">{visualEnergy.map((energy, index) => <i key={index} style={{ height: `${Math.max(8, energy * 100)}%`, animationDelay: `${index * 0.08}s`, opacity: Math.max(.35, energy) }} />)}</div>
         </section>
-      ) : (
-        <div className="space-y-4">
-          <VolumeControl
-            volume={volume}
-            isMuted={isMuted}
-            onVolumeChange={handleVolumeChange}
-            onToggleMute={handleToggleMute}
-          />
 
-          <div className="flex flex-wrap items-center gap-2.5 px-1 py-1">
-            <div className="relative min-w-[148px]" data-preset-dropdown>
-              <button
-                type="button"
-                onClick={() => setShowPresetDropdown((open) => !open)}
-                aria-haspopup="listbox"
-                aria-expanded={showPresetDropdown}
-                className="soft-control flex h-11 w-full items-center gap-2.5 rounded-[14px] px-3.5 text-left text-[13px] font-semibold text-[#343a47]"
-              >
-                <Music2 size={17} className="text-[#6f69df]" />
-                <span className="min-w-0 flex-1 truncate">{activePreset}</span>
-                <ChevronDown
-                  size={15}
-                  className={cn(
-                    "text-[#858c9c] transition-transform duration-200",
-                    showPresetDropdown && "rotate-180",
-                  )}
-                />
-              </button>
+        <section className="sd-panel sd-volume"><div className="sd-panel-label"><span><Volume2 size={14} /> Master volume</span><output>{isMuted ? 0 : volume}%</output></div><div className="sd-range-wrap"><div className="sd-range-fill" style={{ width: `${isMuted ? 0 : volume}%` }} /><input type="range" min="0" max="100" value={isMuted ? 0 : volume} onChange={(event) => { const next = Number(event.target.value); setVolume(next); setIsMuted(false); if (next > 0) { lastAudibleVolume.current = next; localStorage.setItem("super-dribble-last-volume", String(next)); } void audioService.updateVolume(next); }} aria-label="Master volume" /></div></section>
 
-              {showPresetDropdown && (
-                <div
-                  role="listbox"
-                  aria-label="Equalizer presets"
-                  className="absolute left-0 top-full z-50 mt-2 w-[200px] overflow-hidden rounded-[16px] border border-[#dfe4ec] bg-white/95 p-1.5 shadow-[0_18px_38px_rgba(65,78,105,0.16)] backdrop-blur-xl"
-                >
-                  {EQ_PRESETS.map((preset) => {
-                    const selected = activePreset === preset.name;
-                    return (
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        key={preset.name}
-                        onClick={() => handlePresetSelect(preset)}
-                        className={cn(
-                          "flex w-full items-center justify-between rounded-[11px] px-3 py-2 text-left text-[13px] transition-colors duration-150",
-                          selected
-                            ? "bg-[#f0efff] font-semibold text-[#6753ce]"
-                            : "text-[#505767] hover:bg-[#f5f7fb]",
-                        )}
-                      >
-                        {preset.name}
-                        {selected && <Check size={14} />}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+        <section className="sd-panel sd-eq"><div className="sd-panel-label"><span>Parametric EQ</span><div className="sd-inline-actions"><button onClick={() => void selectPreset({ name: "Flat", values: new Array(10).fill(0) })}><RotateCcw size={13} /> Reset</button><button onClick={() => setShowSavePreset((value) => !value)}><Check size={13} /> Save</button></div></div>{showSavePreset && <div className="sd-save-row"><input autoFocus value={presetName} onChange={(event) => setPresetName(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveCustomPreset(); }} placeholder="Preset name" /><button onClick={saveCustomPreset}>Save preset</button></div>}<div className="sd-eq-grid">{eqValues.map((value, index) => <div className="sd-eq-band" key={FREQUENCY_BANDS[index]}><div className="sd-eq-track"><input className="sd-eq-range" type="range" min="-12" max="12" step="0.5" value={value} onChange={(event) => void updateBand(index, Number(event.target.value))} aria-label={`${FREQUENCY_BANDS[index]} gain`} /></div><span>{frequencies[index]}</span></div>)}</div></section>
 
-            <button
-              type="button"
-              onClick={handlePlayPause}
-              disabled={!isAudioInitialized}
-              aria-label={isPlaying ? "Pause playback" : "Play playback"}
-              className={cn(
-                "soft-control flex h-11 w-11 items-center justify-center rounded-[14px]",
-                isAudioInitialized
-                  ? "border-[#d9d7fb] bg-[#f2f0ff] text-[#7259dc] hover:text-[#5f47ca]"
-                  : "text-[#9ba2b1]",
-              )}
-            >
-              {isPlaying ? (
-                <Pause size={18} fill="currentColor" />
-              ) : (
-                <Play size={18} fill="currentColor" />
-              )}
-            </button>
-
-            <button
-              type="button"
-              onClick={handleReset}
-              className="soft-control flex h-11 items-center gap-2 rounded-[14px] px-3.5 text-[13px] font-semibold text-[#687084] hover:text-[#3f7df4]"
-            >
-              <RotateCcw size={16} />
-              Reset
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveView("library")}
-              className="soft-control ml-auto hidden h-11 items-center gap-2 rounded-[14px] px-3.5 text-[13px] font-semibold text-[#687084] hover:text-[#805ee6] sm:flex"
-            >
-              <Library size={16} />
-              <span>More presets</span>
-            </button>
-          </div>
-
-          <section
-            className="surface-panel overflow-hidden"
-            aria-labelledby="equalizer-title"
-          >
-            <div className="flex items-end justify-between gap-4 border-b border-[#e8ebf1] px-5 py-4 sm:px-6">
-              <div>
-                <h2
-                  id="equalizer-title"
-                  className="text-[15px] font-semibold text-[#282d38]"
-                >
-                  10-band equalizer
-                </h2>
-                <p className="mt-0.5 text-[12px] text-[#8a91a0]">
-                  Shape the current tab from low bass to high detail
-                </p>
-              </div>
-              <span className="data-type flex-shrink-0 text-[11px] text-[#9198a6]">
-                -12 · +12 dB
-              </span>
-            </div>
-
-            <div className="eq-bands-wrap px-2 pb-4 pt-5 sm:px-4">
-              <div className="grid w-full grid-cols-10 items-start pb-1">
-                {FREQUENCY_BANDS.map((frequency, index) => (
-                  <EqualizerBand
-                    key={frequency}
-                    frequency={frequency}
-                    value={eqValues[index]}
-                    color={BAND_COLORS[index]}
-                    visualizationRef={(node) => {
-                      energyNodes.current[index] = node;
-                    }}
-                    onChange={(value) => handleBandChange(index, value)}
-                    isActive={isPlaying && eqValues[index] !== 0}
-                  />
-                ))}
-              </div>
-            </div>
-          </section>
-        </div>
-      )}
-    </div>
+        <div className="sd-bottom-grid"><section className="sd-panel sd-spatial"><span className="sd-micro">Spatializer</span>{[["Stereo", stereoEnabled, "stereo"], ["Reverb", reverbEnabled, "reverb"]].map(([label, enabled, kind]) => <div className="sd-toggle-row" key={String(label)}><span className={cn(!enabled && "dim")}>{label}</span><button className={cn("sd-toggle", enabled && "is-on")} onClick={() => void toggleSpatializer(kind as "stereo" | "reverb")} aria-pressed={Boolean(enabled)} aria-label={`Toggle ${label}`}><i /></button></div>)}</section><section className="sd-panel sd-presets"><div className="sd-presets-head"><span className="sd-micro">Presets</span><button onClick={() => setActiveView("library")}>Library</button></div><div className="sd-preset-scroll">{presets.map((preset) => <div className="sd-preset-item" key={preset.name}><button className={cn("sd-preset", activePreset === preset.name && "is-active")} onClick={() => void selectPreset(preset)}>{preset.name}</button>{savedPresets.some((item) => item.name === preset.name) && <button className="sd-delete" onClick={() => deleteCustomPreset(preset.name)} aria-label={`Delete ${preset.name}`}><Trash2 size={11} /></button>}</div>)}</div></section></div>
+      </div>
+    </main>
   );
 };

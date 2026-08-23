@@ -216,7 +216,6 @@ class AudioService {
   }
 
   private async sendControlMessage(action: string, data: any): Promise<boolean> {
-      if (!this.isInitialized) return false;
       try {
           const response = await chrome.runtime.sendMessage({
               action,

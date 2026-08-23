@@ -30,6 +30,10 @@ interface LuaPreset {
 
 interface LuaPresetManagerProps {
   className?: string;
+  onPresetApplied?: (
+    type: "equalizer" | "spatializer",
+    preset: LuaPreset,
+  ) => void;
 }
 
 type Feedback = {
@@ -39,11 +43,15 @@ type Feedback = {
 
 export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
   className,
+  onPresetApplied,
 }) => {
   const [equalizerPresets, setEqualizerPresets] = useState<LuaPreset[]>([]);
   const [spatializerPresets, setSpatializerPresets] = useState<LuaPreset[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [activePresets, setActivePresets] = useState<{
+    equalizer: string | null;
+    spatializer: string | null;
+  }>({ equalizer: null, spatializer: null });
   const [applyingPreset, setApplyingPreset] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
@@ -84,7 +92,8 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
     try {
       const success = await audioService.applyLuaPreset(type, preset);
       if (success) {
-        setActivePreset(preset.name);
+        setActivePresets((previous) => ({ ...previous, [type]: preset.name }));
+        onPresetApplied?.(type, preset);
         setFeedback({
           tone: "success",
           message: `${preset.name} is now active.`,
@@ -166,28 +175,15 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
     preset: LuaPreset,
     type: "equalizer" | "spatializer",
   ) => {
-    const isActive = activePreset === preset.name;
+    const isActive = activePresets[type] === preset.name;
     const actionId = `${type}:${preset.name}`;
     const isApplying = applyingPreset === actionId;
 
     return (
-      <article
-        key={actionId}
-        className={cn(
-          "rounded-[16px] border p-4 transition-[border-color,background-color,box-shadow] duration-200",
-          isActive
-            ? "border-[#c9c0f3] bg-[#f7f5ff] shadow-[0_8px_22px_rgba(110,86,210,0.08)]"
-            : "border-[#e5e8ef] bg-white/65 hover:border-[#d5d9e3] hover:bg-white/90",
-        )}
-      >
+      <article key={actionId} className={cn("sd-settings-card", isActive && "is-active")}>
         <div className="flex items-start gap-3">
           <div
-            className={cn(
-              "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[11px]",
-              type === "equalizer"
-                ? "bg-[#edf3ff] text-[#4779e5]"
-                : "bg-[#f5efff] text-[#8b5cdb]",
-            )}
+            className={cn("sd-settings-icon", type === "spatializer" && "is-spatial")}
           >
             {type === "equalizer" ? (
               <SlidersHorizontal size={17} />
@@ -198,22 +194,22 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
 
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h4 className="truncate text-[13px] font-semibold text-[#323845]">
+              <h4 className="truncate text-[13px] font-semibold text-white">
                 {preset.name}
               </h4>
               {isActive && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-[#eae6ff] px-2 py-0.5 text-[10px] font-semibold text-[#6b52cf]">
+                <span className="sd-active-badge">
                   <CheckCircle2 size={11} />
                   Active
                 </span>
               )}
             </div>
             {preset.description && (
-              <p className="mt-1 text-[12px] leading-relaxed text-[#7d8595]">
+              <p className="mt-1 text-[12px] leading-relaxed text-white/55">
                 {preset.description}
               </p>
             )}
-            <p className="data-type mt-2 text-[10px] text-[#979eac]">
+            <p className="data-type mt-2 text-[10px] text-white/40">
               {type === "equalizer"
                 ? `${preset.bands?.length ?? 0} bands`
                 : `Width ${preset.params?.width ?? 0} · Mix ${preset.params?.mix ?? 0}`}
@@ -227,7 +223,7 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
             onClick={() => void applyPreset(preset, type)}
             disabled={Boolean(applyingPreset)}
             aria-label={`Apply ${preset.name}`}
-            className="soft-control flex h-9 items-center gap-1.5 rounded-[11px] px-3 text-[12px] font-semibold text-[#6655c8] hover:text-[#5442b6]"
+            className="sd-settings-action"
           >
             {isApplying ? (
               <LoaderCircle className="animate-spin" size={14} />
@@ -241,7 +237,7 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
             onClick={() => exportPreset(preset, type)}
             aria-label={`Export ${preset.name}`}
             title="Export Lua preset"
-            className="soft-control flex h-9 w-9 items-center justify-center rounded-[11px] text-[#747c8c] hover:text-[#3f7df4]"
+            className="sd-settings-action is-icon"
           >
             <Download size={15} />
           </button>

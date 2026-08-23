@@ -206,12 +206,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
              currentSpatializerParams = request.params ? { ...request.params } : null;
          }
 
-         // Forward control messages to offscreen
-         const controlResponse = await chrome.runtime.sendMessage({
-             ...request,
-             target: 'offscreen'
+         // Keep user changes as the next-session state even while no capture
+         // is active. Forward only when the offscreen audio engine exists.
+         const contexts = await chrome.runtime.getContexts({
+             contextTypes: ['OFFSCREEN_DOCUMENT'],
+             documentUrls: [chrome.runtime.getURL('offscreen.html')],
          });
-         sendResponse(controlResponse?.success === false ? controlResponse : { success: true });
+         if (contexts.length === 0) {
+             sendResponse({ success: true, cached: true });
+         } else {
+             const controlResponse = await chrome.runtime.sendMessage({
+                 ...request,
+                 target: 'offscreen'
+             });
+             sendResponse(controlResponse?.success === false ? controlResponse : { success: true });
+         }
       }
       else if (request.action === 'get_status') {
           const engineStatus = await getOffscreenStatus();
