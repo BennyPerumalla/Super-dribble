@@ -30,10 +30,6 @@ interface LuaPreset {
 
 interface LuaPresetManagerProps {
   className?: string;
-  onPresetApplied?: (
-    type: "equalizer" | "spatializer",
-    preset: LuaPreset,
-  ) => void;
 }
 
 type Feedback = {
@@ -41,17 +37,36 @@ type Feedback = {
   message: string;
 } | null;
 
+const glassStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.07)",
+  backdropFilter: "blur(30px) saturate(160%)",
+  WebkitBackdropFilter: "blur(30px) saturate(160%)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 16,
+  boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+};
+
+const glassButtonStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.08)",
+  border: "1px solid rgba(255,255,255,0.12)",
+};
+
+const microStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+  color: "rgba(255,255,255,0.45)",
+  fontFamily: "var(--font-mono)",
+};
+
 export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
   className,
-  onPresetApplied,
 }) => {
   const [equalizerPresets, setEqualizerPresets] = useState<LuaPreset[]>([]);
   const [spatializerPresets, setSpatializerPresets] = useState<LuaPreset[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activePresets, setActivePresets] = useState<{
-    equalizer: string | null;
-    spatializer: string | null;
-  }>({ equalizer: null, spatializer: null });
+  const [activePreset, setActivePreset] = useState<string | null>(null);
   const [applyingPreset, setApplyingPreset] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<Feedback>(null);
 
@@ -92,8 +107,7 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
     try {
       const success = await audioService.applyLuaPreset(type, preset);
       if (success) {
-        setActivePresets((previous) => ({ ...previous, [type]: preset.name }));
-        onPresetApplied?.(type, preset);
+        setActivePreset(preset.name);
         setFeedback({
           tone: "success",
           message: `${preset.name} is now active.`,
@@ -175,15 +189,35 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
     preset: LuaPreset,
     type: "equalizer" | "spatializer",
   ) => {
-    const isActive = activePresets[type] === preset.name;
+    const isActive = activePreset === preset.name;
     const actionId = `${type}:${preset.name}`;
     const isApplying = applyingPreset === actionId;
+    const accent =
+      type === "equalizer" ? "rgba(48,209,88,0.9)" : "rgba(10,132,255,0.9)";
+    const accentSoft =
+      type === "equalizer" ? "rgba(48,209,88,0.12)" : "rgba(10,132,255,0.12)";
 
     return (
-      <article key={actionId} className={cn("sd-settings-card", isActive && "is-active")}>
+      <article
+        key={actionId}
+        className="rounded-[16px] p-3.5 transition-all duration-200"
+        style={
+          isActive
+            ? {
+                background: "rgba(48,209,88,0.1)",
+                border: "1px solid rgba(48,209,88,0.3)",
+                boxShadow: "0 8px 22px rgba(48,209,88,0.08)",
+              }
+            : {
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.09)",
+              }
+        }
+      >
         <div className="flex items-start gap-3">
           <div
-            className={cn("sd-settings-icon", type === "spatializer" && "is-spatial")}
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[11px]"
+            style={{ background: accentSoft, color: accent }}
           >
             {type === "equalizer" ? (
               <SlidersHorizontal size={17} />
@@ -198,18 +232,33 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
                 {preset.name}
               </h4>
               {isActive && (
-                <span className="sd-active-badge">
+                <span
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                  style={{
+                    background: "rgba(48,209,88,0.15)",
+                    color: "rgba(48,209,88,0.95)",
+                  }}
+                >
                   <CheckCircle2 size={11} />
                   Active
                 </span>
               )}
             </div>
             {preset.description && (
-              <p className="mt-1 text-[12px] leading-relaxed text-white/55">
+              <p
+                className="mt-1 text-[12px] leading-relaxed"
+                style={{ color: "rgba(255,255,255,0.5)" }}
+              >
                 {preset.description}
               </p>
             )}
-            <p className="data-type mt-2 text-[10px] text-white/40">
+            <p
+              className="mt-2 text-[10px] tabular-nums"
+              style={{
+                color: "rgba(255,255,255,0.4)",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
               {type === "equalizer"
                 ? `${preset.bands?.length ?? 0} bands`
                 : `Width ${preset.params?.width ?? 0} · Mix ${preset.params?.mix ?? 0}`}
@@ -223,7 +272,8 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
             onClick={() => void applyPreset(preset, type)}
             disabled={Boolean(applyingPreset)}
             aria-label={`Apply ${preset.name}`}
-            className="sd-settings-action"
+            className="flex h-9 items-center gap-1.5 rounded-[11px] px-3 text-[12px] font-semibold text-white transition-all duration-200 hover:bg-white/10 active:scale-95 disabled:opacity-50"
+            style={glassButtonStyle}
           >
             {isApplying ? (
               <LoaderCircle className="animate-spin" size={14} />
@@ -237,7 +287,8 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
             onClick={() => exportPreset(preset, type)}
             aria-label={`Export ${preset.name}`}
             title="Export Lua preset"
-            className="sd-settings-action is-icon"
+            className="flex h-9 w-9 items-center justify-center rounded-[11px] transition-all duration-200 hover:bg-white/10 active:scale-95"
+            style={{ ...glassButtonStyle, color: "rgba(255,255,255,0.6)" }}
           >
             <Download size={15} />
           </button>
@@ -247,18 +298,24 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
   };
 
   return (
-    <div className={cn("space-y-4", className)}>
-      <div className="surface-panel flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-[11px] bg-[#eef2fb] text-[#667085]">
-            <FileCode2 size={17} />
+    <div className={cn("space-y-3", className)}>
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 p-3.5"
+        style={glassStyle}
+      >
+        <div className="flex items-center gap-2.5">
+          <div
+            className="flex h-9 w-9 items-center justify-center rounded-[11px]"
+            style={{ ...glassButtonStyle, color: "rgba(255,255,255,0.7)" }}
+          >
+            <FileCode2 size={16} />
           </div>
           <div>
-            <h3 className="text-[13px] font-semibold text-[#343a47]">
+            <h3 className="text-[13px] font-semibold text-white leading-tight">
               Lua preset files
             </h3>
-            <p className="text-[11px] text-[#8b92a1]">
-              Loaded from the bundled audio engine
+            <p className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
+              Bundled with the audio engine
             </p>
           </div>
         </div>
@@ -266,7 +323,8 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
           type="button"
           onClick={() => void loadLuaPresets()}
           disabled={loading}
-          className="soft-control flex h-9 items-center gap-2 rounded-[11px] px-3 text-[12px] font-semibold text-[#687084] hover:text-[#3f7df4]"
+          className="flex h-9 items-center gap-2 rounded-[11px] px-3 text-[12px] font-semibold text-white/80 transition-all duration-200 hover:text-white hover:bg-white/10 active:scale-95 disabled:opacity-50"
+          style={glassButtonStyle}
         >
           {loading ? (
             <LoaderCircle className="animate-spin" size={14} />
@@ -280,35 +338,49 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
       {feedback && (
         <div
           role={feedback.tone === "error" ? "alert" : "status"}
-          className={cn(
-            "rounded-[14px] border px-4 py-3 text-[12px]",
+          className="rounded-[14px] px-4 py-3 text-[12px] font-medium"
+          style={
             feedback.tone === "success"
-              ? "border-[#bde6cf] bg-[#f3fcf7] text-[#27784c]"
-              : "border-[#efc5cc] bg-[#fff7f8] text-[#a83d4e]",
-          )}
+              ? {
+                  background: "rgba(48,209,88,0.12)",
+                  border: "1px solid rgba(48,209,88,0.3)",
+                  color: "rgba(120,230,160,0.95)",
+                }
+              : {
+                  background: "rgba(255,59,48,0.12)",
+                  border: "1px solid rgba(255,59,48,0.3)",
+                  color: "rgba(255,120,110,0.95)",
+                }
+          }
         >
           {feedback.message}
         </div>
       )}
 
       {loading && equalizerPresets.length === 0 ? (
-        <div className="surface-panel flex min-h-[240px] items-center justify-center text-[#7f8797]">
+        <div
+          className="flex min-h-[200px] items-center justify-center"
+          style={{ ...glassStyle, color: "rgba(255,255,255,0.55)" }}
+        >
           <div className="flex items-center gap-2 text-[13px]">
             <LoaderCircle className="animate-spin" size={18} />
             Loading preset library
           </div>
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <section className="surface-panel p-4" aria-labelledby="lua-eq-title">
+        <div className="space-y-3">
+          <section className="p-3.5" style={glassStyle} aria-labelledby="lua-eq-title">
             <div className="mb-3 flex items-center justify-between">
-              <h3
-                id="lua-eq-title"
-                className="text-[14px] font-semibold text-[#343a47]"
-              >
+              <span id="lua-eq-title" style={microStyle}>
                 Equalizer profiles
-              </h3>
-              <span className="data-type text-[10px] text-[#969daa]">
+              </span>
+              <span
+                className="text-[10px] tabular-nums"
+                style={{
+                  color: "rgba(255,255,255,0.4)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
                 {equalizerPresets.length}
               </span>
             </div>
@@ -318,7 +390,13 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
                   renderPreset(preset, "equalizer"),
                 )
               ) : (
-                <p className="rounded-[14px] border border-dashed border-[#dfe3eb] px-4 py-8 text-center text-[12px] text-[#8a91a0]">
+                <p
+                  className="rounded-[12px] px-4 py-6 text-center text-[12px]"
+                  style={{
+                    border: "1px dashed rgba(255,255,255,0.15)",
+                    color: "rgba(255,255,255,0.4)",
+                  }}
+                >
                   No equalizer profiles found.
                 </p>
               )}
@@ -326,17 +404,21 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
           </section>
 
           <section
-            className="surface-panel p-4"
+            className="p-3.5"
+            style={glassStyle}
             aria-labelledby="lua-spatial-title"
           >
             <div className="mb-3 flex items-center justify-between">
-              <h3
-                id="lua-spatial-title"
-                className="text-[14px] font-semibold text-[#343a47]"
-              >
+              <span id="lua-spatial-title" style={microStyle}>
                 Spatial profiles
-              </h3>
-              <span className="data-type text-[10px] text-[#969daa]">
+              </span>
+              <span
+                className="text-[10px] tabular-nums"
+                style={{
+                  color: "rgba(255,255,255,0.4)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
                 {spatializerPresets.length}
               </span>
             </div>
@@ -346,7 +428,13 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
                   renderPreset(preset, "spatializer"),
                 )
               ) : (
-                <p className="rounded-[14px] border border-dashed border-[#dfe3eb] px-4 py-8 text-center text-[12px] text-[#8a91a0]">
+                <p
+                  className="rounded-[12px] px-4 py-6 text-center text-[12px]"
+                  style={{
+                    border: "1px dashed rgba(255,255,255,0.15)",
+                    color: "rgba(255,255,255,0.4)",
+                  }}
+                >
                   No spatial profiles found.
                 </p>
               )}
