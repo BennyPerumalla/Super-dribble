@@ -255,6 +255,7 @@ class AudioService {
     title: string;
     artist?: string;
     album?: string;
+    artwork?: string;
     appName: string;
     duration?: number;
     position?: number;
