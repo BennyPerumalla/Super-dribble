@@ -4,7 +4,10 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const os = require('node:os');
+
 const ROOT = __dirname;
+const isWindows = process.platform === 'win32';
 const modules = {
   equalizer: {
     source: 'wasm/equalizer/equalizer.cpp',
@@ -41,6 +44,9 @@ function compilerCandidates() {
     candidates.push(path.join(process.env.EMSDK, 'upstream', 'emscripten', 'em++.exe'));
     candidates.push(path.join(process.env.EMSDK, 'upstream', 'emscripten', 'em++.bat'));
   }
+  const homeEmsdk = path.join(os.homedir(), 'emsdk', 'upstream', 'emscripten');
+  candidates.push(path.join(homeEmsdk, 'em++.exe'));
+  candidates.push(path.join(homeEmsdk, 'em++.bat'));
   candidates.push(path.join(ROOT, 'emsdk', 'upstream', 'emscripten', 'em++.exe'));
   candidates.push(path.join(ROOT, 'emsdk', 'upstream', 'emscripten', 'em++.bat'));
   candidates.push('em++');
@@ -50,23 +56,23 @@ function compilerCandidates() {
 function findCompiler() {
   for (const candidate of compilerCandidates()) {
     if (path.isAbsolute(candidate) && !fs.existsSync(candidate)) continue;
-    const result = spawnSync(candidate, ['--version'], { encoding: 'utf8', shell: false });
+    const result = spawnSync(candidate, ['--version'], { encoding: 'utf8', shell: isWindows });
     if (result.status === 0) return candidate;
   }
   return null;
 }
 
 function buildModule(compiler, name, config) {
-  const exportedFunctions = [...config.exports, 'malloc', 'free'].map((entry) => `_${entry}`);
+  const exportedFunctions = [...config.exports, 'malloc', 'free'].map((entry) => `_${entry}`).join(',');
   const args = [
-    path.join(ROOT, config.source),
-    '-o', path.join(ROOT, config.output),
+    config.source,
+    '-o', config.output,
     '-std=c++17',
     '-O3',
     '-fno-exceptions',
     '--no-entry',
     '-sSTANDALONE_WASM=1',
-    `-sEXPORTED_FUNCTIONS=${JSON.stringify(exportedFunctions)}`,
+    `-sEXPORTED_FUNCTIONS=${exportedFunctions}`,
     '-sFILESYSTEM=0',
     '-sMALLOC=emmalloc',
     '-sALLOW_MEMORY_GROWTH=0',
@@ -76,7 +82,7 @@ function buildModule(compiler, name, config) {
   ];
 
   console.log(`Building ${name} WASM...`);
-  const result = spawnSync(compiler, args, { cwd: ROOT, stdio: 'inherit', shell: false });
+  const result = spawnSync(compiler, args, { cwd: ROOT, stdio: 'inherit', shell: isWindows });
   if (result.status !== 0) throw new Error(`${name} WASM build failed with exit code ${result.status}`);
   console.log(`Built ${config.output}`);
 }

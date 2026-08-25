@@ -44,6 +44,7 @@ UI/build/
 # Editor / IDE
 .vscode/
 .idea/
+.claude/
 *.code-workspace
 # OS files
 .DS_Store
