@@ -1,5 +1,8 @@
-// Content script for Super Dribble Audio Amplifier
-// This script is injected into web pages to ensure the extension is active
+// Content script for Super Dribble Audio Amplifier.
+// It is injected only after the user invokes the extension on the active tab.
+(function initializeSuperDribbleContentScript() {
+  if (globalThis.__superDribbleContentScriptLoaded) return;
+  globalThis.__superDribbleContentScriptLoaded = true;
 
 console.log('Super Dribble Audio Amplifier content script loaded');
 
@@ -58,6 +61,35 @@ function getSpotifyMetadata() {
   return { title, artist };
 }
 
+function absoluteUrl(src) {
+  try {
+    return new URL(src, location.href).href;
+  } catch {
+    return '';
+  }
+}
+
+// MediaSession exposes artwork as [{ src, sizes: "96x96 256x256", type }].
+// Pick the largest so the popup gets a crisp thumbnail.
+function getArtwork(md) {
+  let best = '';
+  let bestArea = -1;
+  for (const art of (md && md.artwork) || []) {
+    if (!art || !art.src) continue;
+    const largest = String(art.sizes || '').trim().split(/\s+/).pop() || '';
+    const [w, h] = largest.split('x').map(Number);
+    const area = Number.isFinite(w) && Number.isFinite(h) ? w * h : 0;
+    if (area > bestArea) {
+      bestArea = area;
+      best = art.src;
+    }
+  }
+  if (best) return absoluteUrl(best);
+
+  const og = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
+  return og && og.content ? absoluteUrl(og.content) : '';
+}
+
 function getMediaMetadata() {
   const el = pickPrimaryMedia();
   const ms = navigator.mediaSession || {};
@@ -82,6 +114,7 @@ function getMediaMetadata() {
     title,
     artist,
     album: (md && md.album) || '',
+    artwork: getArtwork(md),
     appName: getAppName(),
     duration: el && isFinite(el.duration) ? el.duration : undefined,
     position: el && isFinite(el.currentTime) ? el.currentTime : undefined,
@@ -251,3 +284,4 @@ try {
 } catch (e) {
   // Ignore invalidation errors on init
 }
+})();

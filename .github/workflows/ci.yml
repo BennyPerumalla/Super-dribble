@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.29.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: UI/pnpm-lock.yaml
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 6.0.6
+          actions-cache-folder: emsdk-cache
+
+      - name: Install UI dependencies
+        working-directory: UI
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint UI
+        working-directory: UI
+        run: pnpm run lint
+
+      - name: Test UI
+        working-directory: UI
+        run: pnpm test
+
+      - name: Test extension and WASM architecture
+        run: node --test tests/*.test.js
+
+      - name: Build verified release package
+        run: node build-extension.js
+
+      - name: Upload Chrome Web Store package
+        uses: actions/upload-artifact@v4
+        with:
+          name: super-dribble-extension
+          path: output/Super-Dribble.zip
+          if-no-files-found: error
+          retention-days: 14

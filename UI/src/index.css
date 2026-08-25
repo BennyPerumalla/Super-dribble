@@ -1,200 +1,539 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  /**
-   * Audio Equalizer Theme
-   * Custom CSS variables for modern audio interface
-  */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-
+    --background: 216 38% 97%;
+    --foreground: 222 21% 14%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-
+    --card-foreground: 222 21% 14%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 222 21% 14%;
+    --primary: 220 90% 58%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 27% 95%;
+    --secondary-foreground: 222 21% 18%;
+    --muted: 218 27% 95%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 251 86% 66%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 355 76% 58%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 218 25% 89%;
+    --input: 218 25% 89%;
+    --ring: 222 88% 61%;
+    --radius: 1rem;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --eq-background: 216 38% 97%;
+    --eq-surface: 0 0% 100%;
+    --eq-surface-light: 220 33% 98%;
+    --eq-border: 218 25% 89%;
+    --eq-text: 222 21% 14%;
+    --eq-text-dim: 220 9% 46%;
+    --eq-accent: 222 89% 60%;
+    --eq-accent-glow: 258 84% 66%;
+    --eq-slider-track: 220 24% 92%;
+    --eq-slider-thumb: 0 0% 100%;
+    --eq-frequency-bar: 222 89% 60%;
+    --eq-volume: 222 89% 60%;
+    --eq-danger: 355 76% 58%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-
-    --radius: 0.5rem;
-
-    /* Audio Equalizer Theme Colors */
-    --eq-background: 215 28% 8%;
-    --eq-surface: 215 25% 12%;
-    --eq-surface-light: 215 20% 16%;
-    --eq-border: 215 15% 24%;
-    --eq-text: 215 10% 85%;
-    --eq-text-dim: 215 8% 65%;
-    --eq-accent: 158 100% 45%;
-    --eq-accent-glow: 158 100% 50%;
-    --eq-slider-track: 215 15% 20%;
-    --eq-slider-thumb: 158 100% 50%;
-    --eq-frequency-bar: 158 100% 40%;
-    --eq-volume: 43 100% 50%;
-    --eq-danger: 0 100% 60%;
+    --surface-raised: rgba(255, 255, 255, 0.82);
+    --line-soft: rgba(108, 124, 150, 0.15);
+    --shadow-shell:
+      0 26px 70px rgba(76, 92, 122, 0.13), 0 4px 16px rgba(76, 92, 122, 0.06);
+    --shadow-soft:
+      0 10px 30px rgba(80, 96, 124, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.92);
+    --shadow-control:
+      0 5px 14px rgba(70, 84, 110, 0.09),
+      inset 0 1px 0 rgba(255, 255, 255, 0.95);
+    --signal-gradient: linear-gradient(
+      90deg,
+      #3f7df4 0%,
+      #7472ed 43%,
+      #ae66df 70%,
+      #e765b1 100%
+    );
   }
 
-  .dark {
-    --background: 215 28% 8%;
-    --foreground: 215 10% 85%;
-
-    --card: 215 25% 12%;
-    --card-foreground: 215 10% 85%;
-
-    --popover: 215 25% 12%;
-    --popover-foreground: 215 10% 85%;
-
-    --primary: 158 100% 45%;
-    --primary-foreground: 215 28% 8%;
-
-    --secondary: 215 20% 16%;
-    --secondary-foreground: 215 10% 85%;
-
-    --muted: 215 20% 16%;
-    --muted-foreground: 215 8% 65%;
-
-    --accent: 158 100% 45%;
-    --accent-foreground: 215 28% 8%;
-
-    --destructive: 0 100% 60%;
-    --destructive-foreground: 215 10% 85%;
-
-    --border: 215 15% 24%;
-    --input: 215 15% 24%;
-    --ring: 158 100% 50%;
-
-    /* Audio Equalizer Theme Colors - Dark Mode */
-    --eq-background: 215 28% 8%;
-    --eq-surface: 215 25% 12%;
-    --eq-surface-light: 215 20% 16%;
-    --eq-border: 215 15% 24%;
-    --eq-text: 215 10% 85%;
-    --eq-text-dim: 215 8% 65%;
-    --eq-accent: 158 100% 45%;
-    --eq-accent-glow: 158 100% 50%;
-    --eq-slider-track: 215 15% 20%;
-    --eq-slider-thumb: 158 100% 50%;
-    --eq-frequency-bar: 158 100% 40%;
-    --eq-volume: 43 100% 50%;
-    --eq-danger: 0 100% 60%;
-  }
-}
-
-@layer base {
   * {
     @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html {
+    min-width: 320px;
+    background: #0a0a0a;
   }
 
   body {
-    @apply bg-background text-foreground;
+    min-width: 320px;
+    height: 596px;
+    margin: 0;
+    overflow: hidden;
+    background: #0a0a0a;
+    color: hsl(var(--foreground));
     font-family:
-      -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
-      Arial, sans-serif;
+      "Segoe UI Variable",
+      "SF Pro Text",
+      "Inter",
+      -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      sans-serif;
+    letter-spacing: 0;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+
+  button {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  :focus-visible {
+    outline: 3px solid rgba(63, 125, 244, 0.28);
+    outline-offset: 3px;
+  }
+
+  ::selection {
+    background: rgba(116, 114, 237, 0.2);
   }
 }
 
 @layer components {
-  .eq-slider {
+  .app-canvas {
+    min-height: 100vh;
+    width: 100%;
+    padding: clamp(12px, 2.5vw, 28px);
+  }
+
+  .audio-shell {
+    width: min(100%, 1120px);
+    margin: 0 auto;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    border-radius: 28px;
+    background: rgba(250, 252, 255, 0.78);
+    box-shadow: var(--shadow-shell);
+    backdrop-filter: blur(22px) saturate(120%);
+  }
+
+  .surface-panel {
+    border: 1px solid var(--line-soft);
+    border-radius: 20px;
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(14px);
+  }
+
+  .soft-control {
+    border: 1px solid var(--line-soft);
+    background: rgba(255, 255, 255, 0.76);
+    box-shadow: var(--shadow-control);
+    transition:
+      background-color 180ms ease,
+      border-color 180ms ease,
+      box-shadow 180ms ease,
+      color 180ms ease,
+      transform 180ms ease,
+      opacity 180ms ease;
+  }
+
+  .soft-control:hover:not(:disabled) {
+    border-color: rgba(99, 113, 145, 0.23);
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow:
+      0 8px 20px rgba(70, 84, 110, 0.11),
+      inset 0 1px 0 #fff;
+  }
+
+  .soft-control:active:not(:disabled) {
+    transform: translateY(1px) scale(0.98);
+    box-shadow:
+      0 2px 8px rgba(70, 84, 110, 0.08),
+      inset 0 1px 2px rgba(70, 84, 110, 0.05);
+  }
+
+  .soft-control:disabled {
+    cursor: not-allowed;
+    opacity: 0.46;
+    box-shadow: none;
+  }
+
+  .icon-control {
+    display: inline-flex;
+    width: 42px;
+    height: 42px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    color: #687084;
+  }
+
+  .signal-fill {
+    background: var(--signal-gradient);
+  }
+
+  .data-type {
+    font-family: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .eq-band {
+    width: 100%;
+  }
+
+  .eq-band-track {
+    width: clamp(24px, 5vw, 40px);
+  }
+
+  .eq-step-control {
+    width: 30px;
+    height: 30px;
+  }
+
+  .eq-gain-thumb {
+    width: clamp(22px, 4.5vw, 34px);
+    height: 20px;
+  }
+
+  .volume-range,
+  .band-range {
     -webkit-appearance: none;
     appearance: none;
     background: transparent;
     cursor: pointer;
   }
 
-  .eq-slider::-webkit-slider-track {
-    background: hsl(var(--eq-slider-track));
-    height: 6px;
-    border-radius: 3px;
+  .volume-range::-webkit-slider-runnable-track,
+  .volume-range::-moz-range-track {
+    height: 10px;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
   }
 
-  .eq-slider::-webkit-slider-thumb {
+  .volume-range::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    height: 20px;
-    width: 20px;
+    width: 24px;
+    height: 24px;
+    margin-top: -7px;
+    border: 4px solid #fff;
     border-radius: 50%;
-    background: hsl(var(--eq-slider-thumb));
-    border: 2px solid hsl(var(--eq-background));
-    box-shadow: 0 0 10px hsla(var(--eq-accent-glow), 0.5);
-    transition: all 0.2s ease;
+    background: #f8faff;
+    box-shadow: 0 4px 12px rgba(53, 65, 88, 0.2);
   }
 
-  .eq-slider::-webkit-slider-thumb:hover {
-    transform: scale(1.1);
-    box-shadow: 0 0 15px hsla(var(--eq-accent-glow), 0.8);
-  }
-
-  .eq-slider::-moz-range-track {
-    background: hsl(var(--eq-slider-track));
-    height: 6px;
-    border-radius: 3px;
-    border: none;
-  }
-
-  .eq-slider::-moz-range-thumb {
-    height: 20px;
-    width: 20px;
+  .volume-range::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border: 4px solid #fff;
     border-radius: 50%;
-    background: hsl(var(--eq-slider-thumb));
-    border: 2px solid hsl(var(--eq-background));
-    cursor: pointer;
-    box-shadow: 0 0 10px hsla(var(--eq-accent-glow), 0.5);
+    background: #f8faff;
+    box-shadow: 0 4px 12px rgba(53, 65, 88, 0.2);
   }
 
-  .eq-glow {
-    box-shadow: 0 0 20px hsla(var(--eq-accent-glow), 0.3);
+  .band-range {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    writing-mode: vertical-lr;
+    direction: rtl;
   }
 
-  .eq-text-glow {
-    text-shadow: 0 0 10px hsla(var(--eq-accent-glow), 0.5);
+  .band-range::-webkit-slider-thumb {
+    width: 34px;
+    height: 24px;
   }
 
-  .eq-pulse {
-    animation: eq-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  .band-range::-moz-range-thumb {
+    width: 34px;
+    height: 24px;
+    border: 0;
   }
 
-  @keyframes eq-pulse {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.7;
-    }
+  .eq-energy-layer {
+    --energy-height: 0%;
+    --energy-opacity: 0.18;
+    --energy-shadow: 2px;
+    --peak-position: 0%;
+    --peak-opacity: 0;
+    opacity: 1;
+    filter: saturate(1);
+    transition:
+      opacity 180ms ease,
+      filter 180ms ease;
   }
 
-  @keyframes fade-in {
-    from {
-      opacity: 0;
-      transform: translateY(20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+  .eq-energy-fill {
+    height: var(--energy-height);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--band-color) 78%, white) 0%,
+      var(--band-color) 100%
+    );
+    box-shadow: 0 0 var(--energy-shadow)
+      color-mix(in srgb, var(--band-color) 22%, transparent);
+    opacity: var(--energy-opacity);
   }
 
-  .animate-fade-in {
-    animation: fade-in 0.8s ease-out;
+  .eq-energy-layer[data-state="peak"] .eq-energy-fill {
+    opacity: 0.88;
   }
+
+  .eq-energy-peak {
+    bottom: var(--peak-position);
+    background: color-mix(in srgb, var(--band-color) 72%, white);
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--band-color) 22%, transparent);
+    opacity: var(--peak-opacity);
+  }
+}
+
+@media (max-width: 480px) {
+  .eq-bands-wrap {
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+
+  .eq-frequency-label,
+  .eq-gain-output {
+    font-size: 9px;
+    line-height: 1.15;
+  }
+
+  .eq-step-control {
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+  }
+
+  .eq-step-control svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .eq-db-unit {
+    display: block;
+    margin-top: 2px;
+  }
+
+  .eq-energy-layer {
+    width: 10px;
+  }
+}
+
+@media (max-width: 640px) {
+  .app-canvas {
+    padding: 0;
+  }
+
+  .audio-shell {
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .eq-energy-layer {
+    filter: saturate(0.9);
+  }
+}
+
+/* Design UI — range inputs, EQ sliders, waveform (ported from SuperDribble-Design) */
+input[type='range'] {
+  -webkit-appearance: none;
+  background: transparent;
+  width: 100%;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  background: var(--track-fill, rgba(255, 255, 255, 0.18));
+  border-radius: 2px;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 16px;
+  width: 16px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  margin-top: -6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  transition: transform 0.15s ease;
+}
+
+input[type='range']:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+
+input[type='range'].eq-slider {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 4px;
+  height: 200px;
+  padding: 0;
+  cursor: pointer;
+}
+
+input[type='range'].eq-slider::-webkit-slider-runnable-track {
+  width: 4px;
+  height: 200px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+
+input[type='range'].eq-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  margin-top: 0;
+  margin-left: -5px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+  transition: transform 0.15s ease;
+}
+
+input[type='range'].eq-slider:hover::-webkit-slider-thumb {
+  transform: scale(1.2);
+}
+
+@keyframes waveform {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+
+.wave-bar {
+  transform-origin: center;
+  animation: waveform 1.2s ease-in-out infinite;
+}
+
+/* View + selection transitions */
+@keyframes viewFade {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+.view-fade {
+  animation: viewFade 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dropUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.drop-up {
+  animation: dropUp 0.18s ease;
+  transform-origin: bottom;
+}
+
+@keyframes dropDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.drop-down {
+  animation: dropDown 0.18s ease;
+  transform-origin: top;
+}
+
+/* 3D flip card — EQ (front) / Spatializer (back) */
+.flip-card {
+  perspective: 1200px;
+}
+
+.flip-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.flip-inner.is-flipped {
+  transform: rotateY(180deg);
+}
+
+.flip-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  /* Swaps at the 50% mark, while the card is edge-on and invisible.
+     Guards against Chromium's backface-visibility + backdrop-filter bug. */
+  transition: opacity 0s linear 0.3s;
+}
+
+.flip-back {
+  transform: rotateY(180deg);
+}
+
+.flip-inner:not(.is-flipped) .flip-back,
+.flip-inner.is-flipped .flip-front {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flip-inner {
+    transition: none;
+  }
+
+  .flip-face {
+    transition: none;
+  }
+}
+
+/* Dark scrollbar for the preset library */
+.preset-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.preset-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.preset-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.preset-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.preset-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.28);
 }

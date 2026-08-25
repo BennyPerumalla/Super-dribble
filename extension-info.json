@@ -6,7 +6,7 @@
   "features": [
     "WebAssembly DSP Engine",
     "Lua Preset System",
-    "16-band Parametric Equalizer",
+    "10-band Parametric Equalizer",
     "Spatializer Effects",
     "Real-time Audio Processing"
   ]

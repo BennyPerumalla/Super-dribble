@@ -7,7 +7,6 @@ npm-debug.log*
 npm-debug.log.*
 
 # pnpm
-pnpm-lock.yaml
 pnpm-workspace.yaml
 .pnpm-store/
 
@@ -20,11 +19,13 @@ yarn-error.log*
 dist/
 build/
 out/
+output/
 UI/build/
 
 # Framework & tooling caches
 .vite/
 .cache/
+.playwright-cli/
 .parcel-cache/
 .next/
 .storybook-static/
@@ -43,6 +44,7 @@ UI/build/
 # Editor / IDE
 .vscode/
 .idea/
+.claude/
 *.code-workspace
 # OS files
 .DS_Store
@@ -51,6 +53,7 @@ ehthumbs.db
 
 # WebAssembly & temp
 *.wasm
+emsdk/
 *.js.mem
 *.tmp
 

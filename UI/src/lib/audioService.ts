@@ -8,6 +8,7 @@ export interface AudioStatus {
   volume?: number;
   eqValues?: number[];
   preset?: string;
+  spatializerParams?: SpatializerParams | null;
 }
 
 export interface EQPreset {
@@ -15,9 +16,67 @@ export interface EQPreset {
   values: number[];
 }
 
+export interface SpatializerParams {
+  width?: number;
+  decay?: number;
+  damping?: number;
+  mix?: number;
+  crossoverFrequency?: number;
+  lowWidthFactor?: number;
+  highWidthFactor?: number;
+}
+
 class AudioService {
   private isInitialized = false;
   private capturedTabId: number | null = null;
+  private contentScriptReadiness = new Map<number, Promise<boolean>>();
+
+  private sendRawTabMessage<T = any>(tabId: number, message: any): Promise<T | null> {
+    return new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, message, (response: T) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+        } else {
+          resolve(response ?? null);
+        }
+      });
+    });
+  }
+
+  private async ensureContentScript(tabId: number): Promise<boolean> {
+    const pending = this.contentScriptReadiness.get(tabId);
+    if (pending) return pending;
+
+    const readiness = (async () => {
+      const ping = await this.sendRawTabMessage<{ success?: boolean }>(tabId, { action: 'ping' });
+      if (ping?.success) return true;
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          chrome.scripting.executeScript(
+            { target: { tabId }, files: ['content.js'] },
+            () => {
+              const error = chrome.runtime.lastError;
+              if (error) reject(new Error(error.message));
+              else resolve();
+            },
+          );
+        });
+      } catch {
+        return false;
+      }
+
+      const injectedPing = await this.sendRawTabMessage<{ success?: boolean }>(tabId, { action: 'ping' });
+      return !!injectedPing?.success;
+    })();
+
+    this.contentScriptReadiness.set(tabId, readiness);
+    try {
+      return await readiness;
+    } finally {
+      this.contentScriptReadiness.delete(tabId);
+    }
+  }
 
   private async sendMessageToTab<T = any>(message: any, tabId?: number | null): Promise<T> {
     const ensureTabId = async () => {
@@ -29,23 +88,8 @@ class AudioService {
     const targetTabId = await ensureTabId();
     if (!targetTabId) throw new Error('No active tab available');
 
-    // Wrap callback-style API to Promise for reliability across Chrome versions
-    return new Promise((resolve, reject) => {
-      try {
-        // @ts-ignore sendMessage callback signature
-        chrome.tabs.sendMessage(targetTabId, message, (response: any) => {
-          const err = chrome.runtime.lastError;
-          if (err) {
-            // Ignore error if we just can't reach the content script (it might not be loaded yet)
-            resolve(null as any); 
-          } else {
-            resolve(response);
-          }
-        });
-      } catch (e) {
-        reject(e);
-      }
-    });
+    if (!(await this.ensureContentScript(targetTabId))) return null as T;
+    return (await this.sendRawTabMessage<T>(targetTabId, message)) as T;
   }
 
   // Initialize audio capture via Offscreen Document
@@ -66,8 +110,9 @@ class AudioService {
       const tab = tabs[0];
       this.capturedTabId = tab.id ?? null;
 
-      // Check if we are already connected to this tab
-      const existingStatus = await this.checkConnection();
+      // The active tab is already known, so avoid another tab query while
+      // restoring an existing session.
+      const existingStatus = await this.getStatus();
       if (existingStatus && existingStatus.isInitialized && existingStatus.activeTabId === this.capturedTabId) {
           console.log('Audio capture already active for this tab.');
           this.isInitialized = true;
@@ -79,26 +124,11 @@ class AudioService {
         throw new Error('Cannot capture audio from browser internal pages');
       }
 
-      // Get Media Stream ID
-      const streamId = await new Promise<string>((resolve, reject) => {
-        (chrome.tabCapture as any).getMediaStreamId({ 
-            targetTabId: this.capturedTabId 
-        }, (streamId: string) => {
-          if (chrome.runtime.lastError) {
-            reject(new Error(chrome.runtime.lastError.message));
-          } else {
-            resolve(streamId);
-          }
-        });
-      });
-
-      console.log('Got Stream ID:', streamId);
-
-      // Send to background to start offscreen processing
+      // The service worker must create the stream ID so Chrome can authorize
+      // the offscreen document to consume it.
       const response = await chrome.runtime.sendMessage({
           action: 'start_capture',
-          streamId: streamId,
-          tabId: this.capturedTabId // Send tabId for state tracking
+          tabId: this.capturedTabId
       });
 
       if (response && response.success) {
@@ -120,8 +150,10 @@ class AudioService {
   async checkConnection(): Promise<AudioStatus | null> {
       if (!this.isAvailable()) return null;
       try {
-          const status = await this.getStatus();
-          const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+          const [status, tabs] = await Promise.all([
+            this.getStatus(),
+            chrome.tabs.query({ active: true, currentWindow: true }),
+          ]);
           const currentTabId = tabs[0]?.id;
 
           if (status && status.isInitialized && status.activeTabId === currentTabId) {
@@ -178,8 +210,12 @@ class AudioService {
      return this.sendControlMessage('update_eq_preset', { preset });
   }
 
+  async updateSpatializer(params: SpatializerParams): Promise<boolean> {
+     if (!this.isInitialized) await this.checkConnection();
+     return this.sendControlMessage('update_spatializer', { params });
+  }
+
   private async sendControlMessage(action: string, data: any): Promise<boolean> {
-      if (!this.isInitialized) return false;
       try {
           const response = await chrome.runtime.sendMessage({
               action,
@@ -219,6 +255,7 @@ class AudioService {
     title: string;
     artist?: string;
     album?: string;
+    artwork?: string;
     appName: string;
     duration?: number;
     position?: number;
@@ -258,14 +295,18 @@ class AudioService {
     }
   }
 
-  // Load Lua presets (Proxy to background -> which should proxy to Offscreen/WASM if needed, 
-  // but currently Lua parser is in background? Wait, background WAS handling Lua.)
-  // We need to move Lua handling to offscreen or keep it in background if it's just parsing.
-  // Reviewing background.js: I removed Lua parser.
-  // So we need to re-implement Lua or make sure offscreen handles it.
-  // For now, return empty to prevent crash.
   async loadLuaPresets(presetType: 'equalizer' | 'spatializer'): Promise<any[]> {
-      return []; 
+      const { LuaPresetParser } = await import("@/utils/lua-preset-parser");
+      const parser = new LuaPresetParser();
+      const isInitialized = await parser.initialize();
+
+      if (!isInitialized) {
+          throw new Error('Failed to initialize Lua preset parser');
+      }
+
+      return presetType === 'equalizer'
+          ? parser.loadEqualizerPresets()
+          : parser.loadSpatializerPresets();
   }
 
   async applyLuaPreset(presetType: 'equalizer' | 'spatializer', preset: any): Promise<boolean> {
@@ -281,10 +322,8 @@ class AudioService {
               values: values
           });
       } else if (presetType === 'spatializer') {
-          // Send spatializer params if supported (currently only EQ is fully impemented in offscreen.js)
-          // We can add spatializer support later, but for now just acknowledge.
-          console.log('Applying spatializer preset:', preset);
-          return true; 
+          if (!preset.params) return false;
+          return this.updateSpatializer(preset.params);
       }
       return false;
   }

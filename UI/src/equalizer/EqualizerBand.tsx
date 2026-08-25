@@ -1,25 +1,13 @@
-import React, { useRef, useState } from "react";
-
-// Utility function to merge class names
-const cn = (...classes: (string | boolean | undefined | Record<string, boolean>)[]) => {
-  return classes
-    .map(cls => {
-      if (typeof cls === 'object' && cls !== null) {
-        return Object.entries(cls)
-          .filter(([_, value]) => value)
-          .map(([key]) => key)
-          .join(' ');
-      }
-      return cls;
-    })
-    .filter(Boolean)
-    .join(" ");
-};
+import React from "react";
+import { Minus, Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface EqualizerBandProps {
   frequency: string;
   value: number;
   onChange: (value: number) => void;
+  color: string;
+  visualizationRef?: (node: HTMLDivElement | null) => void;
   isActive?: boolean;
   className?: string;
 }
@@ -28,189 +16,104 @@ export const EqualizerBand: React.FC<EqualizerBandProps> = ({
   frequency,
   value,
   onChange,
+  color,
+  visualizationRef,
   isActive = false,
   className,
 }) => {
-  const trackRef = useRef<HTMLDivElement>(null);
-  const [isDragging, setIsDragging] = useState(false);
+  const percentage = ((value + 12) / 24) * 100;
+  const displayValue = `${value > 0 ? "+" : ""}${value.toFixed(1)}`;
 
-  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    setIsDragging(true);
-    updateValue(e);
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  const adjustValue = (amount: number) => {
+    onChange(Math.max(-12, Math.min(12, value + amount)));
   };
-
-  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (isDragging) {
-      updateValue(e);
-    }
-  };
-
-  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    setIsDragging(false);
-    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
-  };
-
-  const updateValue = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!trackRef.current) return;
-
-    const rect = trackRef.current.getBoundingClientRect();
-    const y = e.clientY - rect.top;
-    const percentage = Math.max(0, Math.min(1, y / rect.height));
-    
-    // Convert percentage to value range (-12 to +12)
-    // Invert because top = +12, bottom = -12
-    const newValue = 12 - percentage * 24;
-    
-    // Round to nearest 0.5
-    const roundedValue = Math.round(newValue * 2) / 2;
-    const clampedValue = Math.max(-12, Math.min(12, roundedValue));
-    
-    onChange(clampedValue);
-  };
-
-  const handleIncrement = () => {
-    const newValue = Math.min(12, value + 0.5);
-    onChange(newValue);
-  };
-
-  const handleDecrement = () => {
-    const newValue = Math.max(-12, value - 0.5);
-    onChange(newValue);
-  };
-
-  // Calculate fill position and height
-  const getFillStyle = () => {
-    if (value === 0) return { height: '0px', top: '50%' };
-    
-    if (value > 0) {
-      // Positive values: fill from center (50%) to top
-      const heightPercent = (value / 12) * 50; // value/12 gives ratio, *50 for half height
-      return {
-        height: `${heightPercent}%`,
-        top: `${50 - heightPercent}%`,
-      };
-    } else {
-      // Negative values: fill from center (50%) downward
-      const heightPercent = (Math.abs(value) / 12) * 50;
-      return {
-        height: `${heightPercent}%`,
-        top: '50%',
-      };
-    }
-  };
-
-  const fillStyle = getFillStyle();
 
   return (
-    <div className={cn("flex flex-col items-center space-y-2 flex-shrink-0 w-16", className)}>
-      {/* Frequency Label */}
-      <div className="text-xs font-mono text-eq-text-dim font-medium h-4 flex items-center justify-center w-full">
+    <div
+      className={cn(
+        "eq-band flex min-w-0 flex-col items-center",
+        className,
+      )}
+      style={{ "--band-color": color } as React.CSSProperties}
+    >
+      <span className="eq-frequency-label mb-3 whitespace-nowrap text-[12px] font-semibold text-[#4e5669]">
         {frequency}
-      </div>
+      </span>
 
-      {/* Plus Button */}
       <button
-        onClick={handleIncrement}
-        className={cn(
-          "w-6 h-6 flex items-center justify-center rounded text-xs font-bold transition-all duration-150",
-          "bg-eq-slider-track hover:bg-eq-accent/20 text-eq-text-dim hover:text-eq-accent",
-          "border border-eq-border/50 hover:border-eq-accent/50 flex-shrink-0"
-        )}
+        type="button"
+        onClick={() => adjustValue(0.5)}
+        disabled={value >= 12}
+        aria-label={`Increase ${frequency} gain`}
+        className="soft-control eq-step-control flex items-center justify-center rounded-[9px] text-[#71798a] hover:text-[#3f7df4] disabled:opacity-35"
       >
-        +
+        <Plus size={14} strokeWidth={2} />
       </button>
 
-      {/* Slider Container */}
-      <div 
-        ref={trackRef}
-        className="relative h-48 w-8 flex flex-col items-center cursor-pointer select-none flex-shrink-0"
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={(e) => {
-          if (isDragging) {
-            handlePointerUp(e);
-          }
-        }}
-      >
-        {/* Background Track */}
-        <div className="absolute inset-0 w-2 bg-eq-slider-track rounded-full mx-auto" />
-
-        {/* Center Line (0dB) */}
-        <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-eq-border transform -translate-y-0.5 z-10" />
-
-        {/* Active Fill */}
+      <div className="eq-band-track relative my-3 h-[228px]">
         <div
-          className={cn(
-            "absolute w-2 rounded-full mx-auto pointer-events-none will-change-transform",
-            {
-              "bg-gradient-to-t from-eq-accent to-eq-accent-glow":
-                value > 0 && isActive,
-              "bg-gradient-to-b from-eq-accent to-eq-accent-glow":
-                value < 0 && isActive,
-              "bg-eq-accent/50": !isActive && value !== 0,
-              "bg-transparent": value === 0,
-            },
-          )}
+          ref={visualizationRef}
+          className="eq-energy-layer pointer-events-none absolute bottom-0 left-1/2 z-[1] h-full w-[14px] -translate-x-1/2 overflow-hidden rounded-full"
+          aria-hidden="true"
+        >
+          <div className="eq-energy-fill absolute inset-x-0 bottom-0 rounded-full" />
+          <div className="eq-energy-peak absolute inset-x-[2px] h-px rounded-full" />
+        </div>
+
+        <div className="absolute bottom-0 left-1/2 h-full w-[6px] -translate-x-1/2 overflow-hidden rounded-full bg-[#e9edf4] shadow-inner">
+          <div
+            className="absolute bottom-0 left-0 w-full rounded-full transition-[height] duration-150 ease-out"
+            style={{
+              height: `${percentage}%`,
+              background: color,
+              opacity: isActive ? 1 : 0.88,
+            }}
+          />
+        </div>
+
+        <div className="absolute left-[7px] right-[7px] top-1/2 h-px -translate-y-1/2 bg-[#d8dee9]" />
+
+        <div
+          className="eq-gain-thumb pointer-events-none absolute left-1/2 z-[3] -translate-x-1/2 translate-y-1/2 rounded-[7px] border border-white/90 bg-white shadow-[0_5px_12px_rgba(58,69,92,0.18)] transition-[bottom,box-shadow,transform] duration-100"
           style={{
-            ...fillStyle,
-            boxShadow: isActive && value !== 0
-              ? `0 0 10px hsla(var(--eq-accent-glow), 0.6)`
-              : "none",
-            transition: isDragging ? 'none' : 'all 150ms ease-out',
+            bottom: `${percentage}%`,
+            boxShadow: isActive
+              ? `0 5px 14px ${color}38, 0 2px 5px rgba(58,69,92,0.12)`
+              : undefined,
           }}
         />
 
-        {/* Thumb Indicator */}
-        <div
-          className={cn(
-            "absolute w-6 h-3 bg-eq-slider-thumb rounded-sm border border-eq-background z-20",
-            "pointer-events-none will-change-transform",
-            {
-              "shadow-lg shadow-eq-accent-glow/50 scale-110": isActive || isDragging,
-              "shadow-md": !isActive && !isDragging,
-            },
-          )}
-          style={{
-            top: `${50 - (value / 12) * 50}%`,
-            transform: "translateY(-50%)",
-            left: "50%",
-            marginLeft: "-12px",
-            transition: isDragging ? 'none' : 'all 150ms ease-out',
-          }}
+        <input
+          className="band-range"
+          type="range"
+          min="-12"
+          max="12"
+          step="0.5"
+          value={value}
+          onChange={(event) => onChange(Number(event.target.value))}
+          aria-label={`${frequency} equalizer gain`}
+          aria-valuetext={`${displayValue} decibels`}
         />
       </div>
 
-      {/* Minus Button */}
       <button
-        onClick={handleDecrement}
-        className={cn(
-          "w-6 h-6 flex items-center justify-center rounded text-xs font-bold transition-all duration-150",
-          "bg-eq-slider-track hover:bg-eq-accent/20 text-eq-text-dim hover:text-eq-accent",
-          "border border-eq-border/50 hover:border-eq-accent/50 flex-shrink-0"
-        )}
+        type="button"
+        onClick={() => adjustValue(-0.5)}
+        disabled={value <= -12}
+        aria-label={`Decrease ${frequency} gain`}
+        className="soft-control eq-step-control flex items-center justify-center rounded-[9px] text-[#71798a] hover:text-[#3f7df4] disabled:opacity-35"
       >
-        −
+        <Minus size={14} strokeWidth={2} />
       </button>
 
-      {/* Value Display */}
-      <div
-        className={cn(
-          "text-xs font-mono font-medium h-4 w-12 text-center flex items-center justify-center",
-          {
-            "text-eq-accent eq-text-glow": isActive && value !== 0,
-            "text-eq-text": !isActive && value !== 0,
-            "text-eq-text-dim": value === 0,
-          },
-        )}
-        style={{
-          transition: 'color 150ms ease-out',
-        }}
+      <output
+        className="eq-gain-output data-type mt-3 text-center text-[12px] font-semibold"
+        style={{ color }}
+        aria-live="polite"
       >
-        {value > 0 ? "+" : ""}
-        {value.toFixed(1)}dB
-      </div>
+        <span>{displayValue}</span>
+        <span className="eq-db-unit"> dB</span>
+      </output>
     </div>
   );
 };

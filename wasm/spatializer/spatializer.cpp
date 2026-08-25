@@ -203,23 +203,21 @@ public:
     }
 
     // --- Setters for real-time control ---
-    void set_width(float w) { width = std::max(0.0f, w); }
-    void set_decay(float d) { decay = std::max(0.0f, std::min(1.0f, d)); update_params(); }
-    void set_damping(float d) { damping = std::max(0.0f, std::min(1.0f, d)); }
-    void set_mix(float m) { mix = std::max(0.0f, std::min(1.0f, m)); }
-    void set_crossover_freq(float freq){crossover_freq = std::max(50.0f, std::min(500.0f, freq)); update_crossover();}
-    void set_low_width_factor(float fractor){low_width_factor = std::max(0.0f, std::min(1.0f, fractor));}
-    void set_high_width_factor(float fractor){high_width_factor = std::max(0.0f, std::min(3.0f, fractor));}
+    void set_width(float w) { if (std::isfinite(w)) width = std::max(0.0f, w); }
+    void set_decay(float d) { if (std::isfinite(d)) { decay = std::clamp(d, 0.0f, 1.0f); update_params(); } }
+    void set_damping(float d) { if (std::isfinite(d)) damping = std::clamp(d, 0.0f, 1.0f); }
+    void set_mix(float m) { if (std::isfinite(m)) mix = std::clamp(m, 0.0f, 1.0f); }
+    void set_crossover_freq(float freq) { if (std::isfinite(freq)) { crossover_freq = std::clamp(freq, 50.0f, 500.0f); update_crossover(); } }
+    void set_low_width_factor(float factor) { if (std::isfinite(factor)) low_width_factor = std::clamp(factor, 0.0f, 1.0f); }
+    void set_high_width_factor(float factor) { if (std::isfinite(factor)) high_width_factor = std::clamp(factor, 0.0f, 3.0f); }
+    void process(float* left, float* right, int num_frames) {
+        if (!left || !right || num_frames <= 0) {
+            return;
+        }
 
-    /**
-     * @brief Processes a stereo audio buffer in-place.
-     * @param buffer Interleaved stereo float buffer (L, R, L, R, ...).
-     * @param num_frames The number of stereo frames (num_samples / 2).
-     */
-    void process(float* buffer, int num_frames) {
         for (int i = 0; i < num_frames; ++i) {
-            float dry_l = buffer[i * 2];
-            float dry_r = buffer[i * 2 + 1];
+            float dry_l = left[i];
+            float dry_r = right[i];
 
             // --- 1. Frequency-Dependent Stereo Widener (Mid/Side with Crossover) ---
             float mid = (dry_l + dry_r) * 0.5f;
@@ -279,8 +277,8 @@ public:
             wet_r *= 0.5f;
 
             // --- 3. Final Dry/Wet Mix ---
-            buffer[i * 2] = (wide_l * (1.0f - mix)) + (wet_l * mix);
-            buffer[i * 2 + 1] = (wide_r * (1.0f - mix)) + (wet_r * mix);
+            left[i] = std::clamp((wide_l * (1.0f - mix)) + (wet_l * mix), -1.0f, 1.0f);
+            right[i] = std::clamp((wide_r * (1.0f - mix)) + (wet_r * mix), -1.0f, 1.0f);
         }
     }
 };
@@ -295,16 +293,17 @@ extern "C" {
         delete sp;
     }
 
-    void spatializer_set_width(Spatializer* sp, float width) { sp->set_width(width); }
-    void spatializer_set_decay(Spatializer* sp, float decay) { sp->set_decay(decay); }
-    void spatializer_set_damping(Spatializer* sp, float damping) { sp->set_damping(damping); }
-    void spatializer_set_mix(Spatializer* sp, float mix) { sp->set_mix(mix); }
-    void spatializer_set_crossover_freq(Spatializer* sp, float freq) { sp->set_crossover_freq(freq); }
-    void spatializer_set_low_width_factor(Spatializer* sp, float fractor) { sp->set_low_width_factor(fractor); }
-    void spatializer_set_high_width_factor(Spatializer* sp, float fractor) { sp->set_high_width_factor(fractor); }
-
-    void spatializer_process_buffer(Spatializer* sp, float* buffer, int num_frames) {
-        sp->process(buffer, num_frames);
+    void spatializer_set_width(Spatializer* sp, float width) { if (sp) sp->set_width(width); }
+    void spatializer_set_decay(Spatializer* sp, float decay) { if (sp) sp->set_decay(decay); }
+    void spatializer_set_damping(Spatializer* sp, float damping) { if (sp) sp->set_damping(damping); }
+    void spatializer_set_mix(Spatializer* sp, float mix) { if (sp) sp->set_mix(mix); }
+    void spatializer_set_crossover_freq(Spatializer* sp, float freq) { if (sp) sp->set_crossover_freq(freq); }
+    void spatializer_set_low_width_factor(Spatializer* sp, float factor) { if (sp) sp->set_low_width_factor(factor); }
+    void spatializer_set_high_width_factor(Spatializer* sp, float factor) { if (sp) sp->set_high_width_factor(factor); }
+    void spatializer_process_buffer(Spatializer* sp, float* left, float* right, int num_frames) {
+        if (sp) {
+            sp->process(left, right, num_frames);
+        }
     }
 }
 

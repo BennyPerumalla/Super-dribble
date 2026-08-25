@@ -1,11 +1,16 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
+import {
+  CheckCircle2,
+  Download,
+  FileCode2,
+  LoaderCircle,
+  Play,
+  RefreshCw,
+  SlidersHorizontal,
+  Sparkles,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/card";
-import { Badge } from "@/components/badge";
-import { Loader2, FileText, Play, Download, AlertCircle } from "lucide-react";
 import { audioService } from "@/lib/audioService";
-import { LuaPresetParser } from "@/utils/lua-preset-parser";
 
 interface LuaPreset {
   name: string;
@@ -27,6 +32,34 @@ interface LuaPresetManagerProps {
   className?: string;
 }
 
+type Feedback = {
+  tone: "success" | "error";
+  message: string;
+} | null;
+
+const glassStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.07)",
+  backdropFilter: "blur(30px) saturate(160%)",
+  WebkitBackdropFilter: "blur(30px) saturate(160%)",
+  border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 16,
+  boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+};
+
+const glassButtonStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.08)",
+  border: "1px solid rgba(255,255,255,0.12)",
+};
+
+const microStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 600,
+  textTransform: "uppercase",
+  letterSpacing: "0.06em",
+  color: "rgba(255,255,255,0.45)",
+  fontFamily: "var(--font-mono)",
+};
+
 export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
   className,
 }) => {
@@ -34,257 +67,381 @@ export const LuaPresetManager: React.FC<LuaPresetManagerProps> = ({
   const [spatializerPresets, setSpatializerPresets] = useState<LuaPreset[]>([]);
   const [loading, setLoading] = useState(false);
   const [activePreset, setActivePreset] = useState<string | null>(null);
-
-  // Load Lua presets on component mount
-  useEffect(() => {
-    loadLuaPresets();
-  }, []);
+  const [applyingPreset, setApplyingPreset] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<Feedback>(null);
 
   const loadLuaPresets = async () => {
     setLoading(true);
+    setFeedback(null);
+
     try {
-      // Initialize the parser
-      const parser = new LuaPresetParser();
-      const isInitialized = await parser.initialize();
-
-      if (!isInitialized) {
-        console.error("Failed to initialize Lua engine");
-        return;
-      }
-
-      // Load both types of presets directly from the parser
-      const [eqPresets, spatPresets] = await Promise.all([
-        parser.loadEqualizerPresets(),
-        parser.loadSpatializerPresets()
+      const [eqPresets, spatialPresets] = await Promise.all([
+        audioService.loadLuaPresets("equalizer"),
+        audioService.loadLuaPresets("spatializer"),
       ]);
 
       setEqualizerPresets(eqPresets as LuaPreset[]);
-      setSpatializerPresets(spatPresets as LuaPreset[]);
-      
-      console.log('Loaded equalizer presets:', eqPresets);
-      console.log('Loaded spatializer presets:', spatPresets);
-    } catch (error) {
-      console.error('Failed to load Lua presets:', error);
+      setSpatializerPresets(spatialPresets as LuaPreset[]);
+    } catch {
+      setFeedback({
+        tone: "error",
+        message: "Preset files could not be loaded.",
+      });
     } finally {
       setLoading(false);
     }
   };
 
-  const applyPreset = async (preset: LuaPreset, type: 'equalizer' | 'spatializer') => {
+  useEffect(() => {
+    void loadLuaPresets();
+  }, []);
+
+  const applyPreset = async (
+    preset: LuaPreset,
+    type: "equalizer" | "spatializer",
+  ) => {
+    const actionId = `${type}:${preset.name}`;
+    setApplyingPreset(actionId);
+    setFeedback(null);
+
     try {
-      // We still use audioService to APPLY the preset to the live audio graph
       const success = await audioService.applyLuaPreset(type, preset);
       if (success) {
         setActivePreset(preset.name);
-        console.log(`Applied ${type} preset:`, preset.name);
+        setFeedback({
+          tone: "success",
+          message: `${preset.name} is now active.`,
+        });
+      } else {
+        setFeedback({
+          tone: "error",
+          message: "Connect audio before applying a preset.",
+        });
       }
-    } catch (error) {
-      console.error(`Failed to apply ${type} preset:`, error);
+    } catch {
+      setFeedback({
+        tone: "error",
+        message: `${preset.name} could not be applied.`,
+      });
+    } finally {
+      setApplyingPreset(null);
     }
   };
 
-  const exportPreset = (preset: LuaPreset, type: 'equalizer' | 'spatializer') => {
-    // Create a downloadable Lua file
-    let luaContent = '';
-    
-    if (type === 'equalizer') {
+  const exportPreset = (
+    preset: LuaPreset,
+    type: "equalizer" | "spatializer",
+  ) => {
+    let luaContent = "";
+
+    if (type === "equalizer") {
       luaContent = `-- ${preset.name} Equalizer Preset\n`;
-      luaContent += `-- Generated by Super Dribble\n\n`;
-      luaContent += `preset = {\n`;
+      luaContent += "-- Generated by Super Dribble\n\n";
+      luaContent += "preset = {\n";
       luaContent += `  name = "${preset.name}",\n`;
       if (preset.description) {
         luaContent += `  description = "${preset.description}",\n`;
       }
-      luaContent += `  bands = {\n`;
+      luaContent += "  bands = {\n";
       preset.bands?.forEach((band, index) => {
         luaContent += `    { frequency = ${band.frequency}, gain = ${band.gain}, q = ${band.q} }`;
-        if (index < (preset.bands?.length || 0) - 1) luaContent += ',';
-        luaContent += '\n';
+        if (index < (preset.bands?.length || 0) - 1) luaContent += ",";
+        luaContent += "\n";
       });
-      luaContent += `  }\n}`;
+      luaContent += "  }\n}";
     } else {
       luaContent = `-- ${preset.name} Spatializer Preset\n`;
-      luaContent += `-- Generated by Super Dribble\n\n`;
-      luaContent += `spatial_preset = {\n`;
+      luaContent += "-- Generated by Super Dribble\n\n";
+      luaContent += "spatial_preset = {\n";
       luaContent += `  name = "${preset.name}",\n`;
       if (preset.description) {
         luaContent += `  description = "${preset.description}",\n`;
       }
-      luaContent += `  params = {\n`;
+      luaContent += "  params = {\n";
       if (preset.params) {
         luaContent += `    width = ${preset.params.width},\n`;
         luaContent += `    decay = ${preset.params.decay},\n`;
         luaContent += `    damping = ${preset.params.damping},\n`;
         luaContent += `    mix = ${preset.params.mix}\n`;
       }
-      luaContent += `  }\n}`;
+      luaContent += "  }\n}";
     }
 
-    // Create and download file
-    const blob = new Blob([luaContent], { type: 'text/plain' });
+    const blob = new Blob([luaContent], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${preset.name.toLowerCase().replace(/\s+/g, '_')}_${type}.lua`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${preset.name
+      .toLowerCase()
+      .replace(/\s+/g, "_")}_${type}.lua`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
+
+    setFeedback({
+      tone: "success",
+      message: `${preset.name} was exported.`,
+    });
+  };
+
+  const renderPreset = (
+    preset: LuaPreset,
+    type: "equalizer" | "spatializer",
+  ) => {
+    const isActive = activePreset === preset.name;
+    const actionId = `${type}:${preset.name}`;
+    const isApplying = applyingPreset === actionId;
+    const accent =
+      type === "equalizer" ? "rgba(48,209,88,0.9)" : "rgba(10,132,255,0.9)";
+    const accentSoft =
+      type === "equalizer" ? "rgba(48,209,88,0.12)" : "rgba(10,132,255,0.12)";
+
+    return (
+      <article
+        key={actionId}
+        className="rounded-[16px] p-3.5 transition-all duration-200"
+        style={
+          isActive
+            ? {
+                background: "rgba(48,209,88,0.1)",
+                border: "1px solid rgba(48,209,88,0.3)",
+                boxShadow: "0 8px 22px rgba(48,209,88,0.08)",
+              }
+            : {
+                background: "rgba(255,255,255,0.05)",
+                border: "1px solid rgba(255,255,255,0.09)",
+              }
+        }
+      >
+        <div className="flex items-start gap-3">
+          <div
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-[11px]"
+            style={{ background: accentSoft, color: accent }}
+          >
+            {type === "equalizer" ? (
+              <SlidersHorizontal size={17} />
+            ) : (
+              <Sparkles size={17} />
+            )}
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="truncate text-[13px] font-semibold text-white">
+                {preset.name}
+              </h4>
+              {isActive && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold"
+                  style={{
+                    background: "rgba(48,209,88,0.15)",
+                    color: "rgba(48,209,88,0.95)",
+                  }}
+                >
+                  <CheckCircle2 size={11} />
+                  Active
+                </span>
+              )}
+            </div>
+            {preset.description && (
+              <p
+                className="mt-1 text-[12px] leading-relaxed"
+                style={{ color: "rgba(255,255,255,0.5)" }}
+              >
+                {preset.description}
+              </p>
+            )}
+            <p
+              className="mt-2 text-[10px] tabular-nums"
+              style={{
+                color: "rgba(255,255,255,0.4)",
+                fontFamily: "var(--font-mono)",
+              }}
+            >
+              {type === "equalizer"
+                ? `${preset.bands?.length ?? 0} bands`
+                : `Width ${preset.params?.width ?? 0} · Mix ${preset.params?.mix ?? 0}`}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => void applyPreset(preset, type)}
+            disabled={Boolean(applyingPreset)}
+            aria-label={`Apply ${preset.name}`}
+            className="flex h-9 items-center gap-1.5 rounded-[11px] px-3 text-[12px] font-semibold text-white transition-all duration-200 hover:bg-white/10 active:scale-95 disabled:opacity-50"
+            style={glassButtonStyle}
+          >
+            {isApplying ? (
+              <LoaderCircle className="animate-spin" size={14} />
+            ) : (
+              <Play size={14} fill="currentColor" />
+            )}
+            Apply
+          </button>
+          <button
+            type="button"
+            onClick={() => exportPreset(preset, type)}
+            aria-label={`Export ${preset.name}`}
+            title="Export Lua preset"
+            className="flex h-9 w-9 items-center justify-center rounded-[11px] transition-all duration-200 hover:bg-white/10 active:scale-95"
+            style={{ ...glassButtonStyle, color: "rgba(255,255,255,0.6)" }}
+          >
+            <Download size={15} />
+          </button>
+        </div>
+      </article>
+    );
   };
 
   return (
-    <div className={cn("space-y-6", className)}>
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-eq-text">Lua Presets</h3>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={loadLuaPresets}
+    <div className={cn("space-y-3", className)}>
+      <div
+        className="flex flex-wrap items-center justify-between gap-3 p-3.5"
+        style={glassStyle}
+      >
+        <div className="flex items-center gap-2.5">
+          <div
+            className="flex h-9 w-9 items-center justify-center rounded-[11px]"
+            style={{ ...glassButtonStyle, color: "rgba(255,255,255,0.7)" }}
+          >
+            <FileCode2 size={16} />
+          </div>
+          <div>
+            <h3 className="text-[13px] font-semibold text-white leading-tight">
+              Lua preset files
+            </h3>
+            <p className="text-[11px]" style={{ color: "rgba(255,255,255,0.5)" }}>
+              Bundled with the audio engine
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => void loadLuaPresets()}
           disabled={loading}
-          className="text-eq-text-dim hover:text-eq-accent border-eq-border bg-transparent"
+          className="flex h-9 items-center gap-2 rounded-[11px] px-3 text-[12px] font-semibold text-white/80 transition-all duration-200 hover:text-white hover:bg-white/10 active:scale-95 disabled:opacity-50"
+          style={glassButtonStyle}
         >
           {loading ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <LoaderCircle className="animate-spin" size={14} />
           ) : (
-            <FileText className="h-4 w-4" />
+            <RefreshCw size={14} />
           )}
-          <span className="ml-2">Reload</span>
-        </Button>
+          Reload
+        </button>
       </div>
 
-      {/* Equalizer Presets */}
-      <Card className="bg-eq-surface border-eq-border">
-        <CardHeader>
-          <CardTitle className="text-eq-text text-base">Equalizer Presets</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-             <div className="flex justify-center py-4 text-eq-text-dim">
-                <Loader2 className="animate-spin" size={20} />
-             </div>
-          ) : equalizerPresets.length === 0 ? (
-            <p className="text-eq-text-dim text-sm">No equalizer presets found</p>
-          ) : (
-            <div className="space-y-2">
-              {equalizerPresets.map((preset, index) => (
-                <div
-                  key={index}
-                  className={cn(
-                    "flex items-center justify-between p-3 rounded-lg border transition-colors",
-                    activePreset === preset.name
-                      ? "bg-eq-accent/10 border-eq-accent"
-                      : "bg-eq-surface-light border-eq-border hover:border-eq-accent/50"
-                  )}
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-eq-text">{preset.name}</span>
-                      {activePreset === preset.name && (
-                        <Badge variant="secondary" className="text-xs bg-eq-accent text-eq-background">
-                          Active
-                        </Badge>
-                      )}
-                    </div>
-                    {preset.description && (
-                      <p className="text-sm text-eq-text-dim mt-1">{preset.description}</p>
-                    )}
-                    {preset.bands && (
-                      <p className="text-xs text-eq-text-dim mt-1">
-                        {preset.bands.length} bands
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => applyPreset(preset, 'equalizer')}
-                      className="text-eq-text-dim hover:text-eq-accent border-eq-border hover:bg-eq-surface"
-                    >
-                      <Play className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => exportPreset(preset, 'equalizer')}
-                      className="text-eq-text-dim hover:text-eq-accent border-eq-border hover:bg-eq-surface"
-                    >
-                      <Download className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {feedback && (
+        <div
+          role={feedback.tone === "error" ? "alert" : "status"}
+          className="rounded-[14px] px-4 py-3 text-[12px] font-medium"
+          style={
+            feedback.tone === "success"
+              ? {
+                  background: "rgba(48,209,88,0.12)",
+                  border: "1px solid rgba(48,209,88,0.3)",
+                  color: "rgba(120,230,160,0.95)",
+                }
+              : {
+                  background: "rgba(255,59,48,0.12)",
+                  border: "1px solid rgba(255,59,48,0.3)",
+                  color: "rgba(255,120,110,0.95)",
+                }
+          }
+        >
+          {feedback.message}
+        </div>
+      )}
 
-      {/* Spatializer Presets */}
-      <Card className="bg-eq-surface border-eq-border">
-        <CardHeader>
-          <CardTitle className="text-eq-text text-base">Spatializer Presets</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-             <div className="flex justify-center py-4 text-eq-text-dim">
-                <Loader2 className="animate-spin" size={20} />
-             </div>
-          ) : spatializerPresets.length === 0 ? (
-            <p className="text-eq-text-dim text-sm">No spatializer presets found</p>
-          ) : (
-            <div className="space-y-2">
-              {spatializerPresets.map((preset, index) => (
-                <div
-                  key={index}
-                  className={cn(
-                    "flex items-center justify-between p-3 rounded-lg border transition-colors",
-                    activePreset === preset.name
-                      ? "bg-eq-accent/10 border-eq-accent"
-                      : "bg-eq-surface-light border-eq-border hover:border-eq-accent/50"
-                  )}
-                >
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-eq-text">{preset.name}</span>
-                      {activePreset === preset.name && (
-                        <Badge variant="secondary" className="text-xs bg-eq-accent text-eq-background">
-                          Active
-                        </Badge>
-                      )}
-                    </div>
-                    {preset.description && (
-                      <p className="text-sm text-eq-text-dim mt-1">{preset.description}</p>
-                    )}
-                    {preset.params && (
-                      <p className="text-xs text-eq-text-dim mt-1">
-                        Width: {preset.params.width}, Decay: {preset.params.decay}
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => applyPreset(preset, 'spatializer')}
-                      className="text-eq-text-dim hover:text-eq-accent border-eq-border hover:bg-eq-surface"
-                    >
-                      <Play className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => exportPreset(preset, 'spatializer')}
-                      className="text-eq-text-dim hover:text-eq-accent border-eq-border hover:bg-eq-surface"
-                    >
-                      <Download className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              ))}
+      {loading && equalizerPresets.length === 0 ? (
+        <div
+          className="flex min-h-[200px] items-center justify-center"
+          style={{ ...glassStyle, color: "rgba(255,255,255,0.55)" }}
+        >
+          <div className="flex items-center gap-2 text-[13px]">
+            <LoaderCircle className="animate-spin" size={18} />
+            Loading preset library
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <section className="p-3.5" style={glassStyle} aria-labelledby="lua-eq-title">
+            <div className="mb-3 flex items-center justify-between">
+              <span id="lua-eq-title" style={microStyle}>
+                Equalizer profiles
+              </span>
+              <span
+                className="text-[10px] tabular-nums"
+                style={{
+                  color: "rgba(255,255,255,0.4)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {equalizerPresets.length}
+              </span>
             </div>
-          )}
-        </CardContent>
-      </Card>
+            <div className="space-y-2.5">
+              {equalizerPresets.length > 0 ? (
+                equalizerPresets.map((preset) =>
+                  renderPreset(preset, "equalizer"),
+                )
+              ) : (
+                <p
+                  className="rounded-[12px] px-4 py-6 text-center text-[12px]"
+                  style={{
+                    border: "1px dashed rgba(255,255,255,0.15)",
+                    color: "rgba(255,255,255,0.4)",
+                  }}
+                >
+                  No equalizer profiles found.
+                </p>
+              )}
+            </div>
+          </section>
+
+          <section
+            className="p-3.5"
+            style={glassStyle}
+            aria-labelledby="lua-spatial-title"
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <span id="lua-spatial-title" style={microStyle}>
+                Spatial profiles
+              </span>
+              <span
+                className="text-[10px] tabular-nums"
+                style={{
+                  color: "rgba(255,255,255,0.4)",
+                  fontFamily: "var(--font-mono)",
+                }}
+              >
+                {spatializerPresets.length}
+              </span>
+            </div>
+            <div className="space-y-2.5">
+              {spatializerPresets.length > 0 ? (
+                spatializerPresets.map((preset) =>
+                  renderPreset(preset, "spatializer"),
+                )
+              ) : (
+                <p
+                  className="rounded-[12px] px-4 py-6 text-center text-[12px]"
+                  style={{
+                    border: "1px dashed rgba(255,255,255,0.15)",
+                    color: "rgba(255,255,255,0.4)",
+                  }}
+                >
+                  No spatial profiles found.
+                </p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 };
